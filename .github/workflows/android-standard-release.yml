@@ -45,10 +45,12 @@ jobs:
           python3 tests/bombchu_bowling/run.py
       - name: Check touch input routing
         run: |
-          for test in ocarina right_stick bindings; do
+          for test in ocarina right_stick bindings context; do
             g++ -std=c++20 -I. -Isoh "tests/android_touch_hud/$test.cpp" -o "$RUNNER_TEMP/touch-$test"
             "$RUNNER_TEMP/touch-$test"
           done
+          javac -d "$RUNNER_TEMP/touch-context-java" Android/app/src/main/java/com/dishii/soh/TouchContext.java tests/android_touch_hud/TouchContextCheck.java
+          java -cp "$RUNNER_TEMP/touch-context-java" com.dishii.soh.TouchContextCheck
       - uses: actions/cache@v4
         with:
           path: |

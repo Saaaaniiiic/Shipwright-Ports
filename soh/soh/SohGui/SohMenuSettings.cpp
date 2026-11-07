@@ -864,6 +864,38 @@ void SohMenu::AddMenuSettings() {
             SetMobileTouchControlsDisabled(CVarGetInteger(CVAR_SETTING("TouchControls.Disabled"), 0) != 0);
         })
         .Options(CheckboxOptions().Tooltip("Hides the touch controls and eye button."));
+    // Dynamic button sets for the integrated presets. The overlay reads these every game update.
+    AddWidget(path, "Hide Controls in Cutscenes", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Dynamic.Cutscenes"))
+        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
+        .RaceDisable(false)
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "Hides every touch button during scripted cutscenes and shows them again afterwards. "
+            "Normal conversations, item pickups and doors are not cutscenes and keep every button. "
+            "When a cutscene text box is waiting for you, only A and B stay. "
+            "Text boxes that close by themselves never bring the buttons back. "
+            "Note: this also hides Start, so skippable cutscenes cannot be skipped by touch while it is on."));
+    AddWidget(path, "Ocarina: Show Only Note Buttons", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Dynamic.Ocarina"))
+        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
+        .RaceDisable(false)
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "While playing the ocarina, shows only the note buttons (A and the C-buttons) and B to leave. "
+            "The D-pad stays if Dpad Ocarina Playback is on, and Z, L and R stay with custom ocarina controls. "
+            "Floating sticks keep working for pitch bend."));
+    AddWidget(path, "Epona: Hide Unused Buttons", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Dynamic.Horse"))
+        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
+        .RaceDisable(false)
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "While riding Epona, hides the shield (R) and L buttons, which do nothing on horseback."));
+    AddWidget(path, "Touch Title and File Select", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Dynamic.Title"))
+        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
+        .RaceDisable(false)
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "Title screen: tap anywhere to start. File select: only the D-pad, A, B and Start are shown, "
+            "and the D-pad moves the cursor."));
     AddWidget(path, "Extra Item Slots", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("DpadEquips"))
         .Options(CheckboxOptions().Tooltip(

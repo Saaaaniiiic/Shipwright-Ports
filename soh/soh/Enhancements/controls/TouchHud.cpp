@@ -2,6 +2,7 @@
 #if defined(__ANDROID__) || (defined(__IOS__) && !defined(__TVOS__))
 #include "TouchHudGeometry.h"
 #include "TouchHudBindings.h"
+#include "TouchHudContext.h"
 #include "TouchOcarina.h"
 #include "TouchRightStick.h"
 #include "soh/ShipInit.hpp"
@@ -23,11 +24,18 @@ extern "C" {
 #include "variables.h"
 extern PlayState* gPlayState;
 }
+// TouchHudContext.h mirrors these game constants so it can be unit-tested alone.
+static_assert(GAMEMODE_NORMAL == TouchHud::GameModeNormal && GAMEMODE_TITLE_SCREEN == TouchHud::GameModeTitle &&
+              GAMEMODE_FILE_SELECT == TouchHud::GameModeFileSelect && GAMEMODE_END_CREDITS == TouchHud::GameModeCredits);
+static_assert(MSGMODE_TEXT_AWAIT_INPUT == 0x07 && MSGMODE_TEXT_AWAIT_NEXT == 0x34 && MSGMODE_TEXT_DONE == 0x35);
+static_assert(TEXTBOX_ENDTYPE_PERSISTENT == 0x40 && TEXTBOX_ENDTYPE_EVENT == 0x50 && TEXTBOX_ENDTYPE_FADING == 0x60);
 namespace {
 std::atomic<bool> active{false};
 std::atomic<bool> naviUtilityIcon{false};
-std::atomic<int> state{0}; // low bits: menu/play/Navi-on-L/jump/free-look; bits 8..17: drawn content
+std::atomic<int> state{0}; // low bits: menu/play/Navi-on-L/jump/free-look; bits 8..17: drawn content;
+                           // bits 18..20: TouchHud::Context (dynamic button set)
 std::atomic<uint32_t> drawnContent{0};
+TouchHud::ContextTracker contextTracker; // only touched from the game-update hook
 std::atomic<uint32_t> held{0}, pending{0};
 std::atomic<bool> pendingMap{false}, mapPressed{false};
 std::atomic<bool> pendingNavi{false}, naviPressed{false};
@@ -43,6 +51,26 @@ bool ManualJumpActive() {
 bool OcarinaPlaying() {
     return gPlayState && GET_PLAYER(gPlayState) &&
            (GET_PLAYER(gPlayState)->stateFlags2 & PLAYER_STATE2_OCARINA_PLAYING);
+}
+TouchHud::Context CurrentContext() {
+    TouchHud::ContextOptions options;
+    options.cutscenes = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Cutscenes"), 1) != 0;
+    options.ocarina = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Ocarina"), 1) != 0;
+    options.horse = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Horse"), 1) != 0;
+    options.title = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Title"), 1) != 0;
+    TouchHud::ContextInputs in;
+    in.gameMode = gSaveContext.gameMode;
+    in.inGame = gPlayState != nullptr;
+    if (gPlayState) {
+        const Player* player = GET_PLAYER(gPlayState);
+        in.ocarina = OcarinaPlaying();
+        // Only the scripted cutscene system counts. PLAYER_STATE1_IN_CUTSCENE and Player::csAction are
+        // too broad: they are also set when talking to NPCs, getting items, opening chests and doors.
+        in.cutscene = gPlayState->csCtx.state != CS_STATE_IDLE;
+        in.horse = player && (player->stateFlags1 & PLAYER_STATE1_ON_HORSE);
+        in.dialogNeedsInput = TouchHud::DialogNeedsInput(gPlayState->msgCtx.msgMode, gPlayState->msgCtx.textboxEndType);
+    }
+    return TouchHud::ClassifyContext(in, options);
 }
 void Init() {
     GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameFrameUpdate>([] {
@@ -60,6 +88,12 @@ void Init() {
                    (OcarinaPlaying() ? 128 : 0);
         const auto content = drawnContent.exchange(0);
         if (!menu && active && gPlayState != nullptr) next |= content << 8;
+        // While the SoH menu is open the overlay must keep its normal set so the
+        // gear/eye can always close it; the context resumes when it closes.
+        next |= TouchHud::ContextBits(contextTracker.Update(menu ? TouchHud::Context::Normal : CurrentContext()));
+        next |= TouchHud::OcarinaFlagBits(CVarGetInteger(CVAR_SETTING("CustomOcarina.Dpad"), 0) != 0,
+                                          CVarGetInteger(CVAR_SETTING("CustomOcarina.Enabled"), 0) != 0,
+                                          CVarGetInteger(CVAR_SETTING("CustomOcarina.RightStick"), 0) != 0);
         state = next;
         if (menu) Reset();
     });

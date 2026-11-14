@@ -3,21 +3,30 @@
 
 namespace TouchHud {
 // What the player is doing right now, as far as the touch overlay cares.
-// Published to the Android/iOS view in state bits 18..20 (see TouchHud.cpp).
+// Published to the Android/iOS view in state bits 18..21 (see TouchHud.cpp).
 enum class Context : int {
     Normal = 0,
     Ocarina,         // playing the ocarina
     Cutscene,        // scripted cutscene (csCtx), no text box that needs the player
-    CutsceneDialog,  // cutscene whose current text box waits for the player
+    Dialog,          // a text box waits for the player (tap the screen to continue)
     Horse,           // riding Epona
     Title,           // title screen ("Press Start")
     FileSelect,      // file select menus
+    Boot,            // app start-up / loading: no game screen yet, nothing to press
+    DialogChoice,    // a text box waiting for a choice (stick to choose, tap to confirm)
 };
 constexpr int ContextShift = 18;
-constexpr int ContextMask = 7;
+constexpr int ContextMask = 15;
 // Ocarina input options the overlay needs to know which note buttons to keep.
-constexpr int OcarinaFlagDpad = 1 << 21, OcarinaFlagCustom = 1 << 22, OcarinaFlagRightStick = 1 << 23;
-constexpr int ContextAllBits = (ContextMask << ContextShift) | OcarinaFlagDpad | OcarinaFlagCustom | OcarinaFlagRightStick;
+constexpr int OcarinaFlagDpad = 1 << 22, OcarinaFlagCustom = 1 << 23, OcarinaFlagRightStick = 1 << 24;
+// The hook has run at least once (before that the overlay is in its Boot state).
+constexpr int StateReady = 1 << 25;
+// Navi has something to say (the C-up "Navi" prompt is on screen).
+constexpr int StateNaviCalling = 1 << 26;
+// "Skip Text" enhancement: holding B (here: holding the screen) fast-forwards dialogue.
+constexpr int StateSkipText = 1 << 27;
+constexpr int ContextAllBits = (ContextMask << ContextShift) | OcarinaFlagDpad | OcarinaFlagCustom |
+                               OcarinaFlagRightStick | StateReady | StateNaviCalling | StateSkipText;
 
 inline int ContextBits(Context context) { return (static_cast<int>(context) & ContextMask) << ContextShift; }
 inline int OcarinaFlagBits(bool dpad, bool custom, bool rightStick) {
@@ -25,7 +34,7 @@ inline int OcarinaFlagBits(bool dpad, bool custom, bool rightStick) {
 }
 inline Context ContextFromState(int state) {
     const int value = (state >> ContextShift) & ContextMask;
-    return value <= static_cast<int>(Context::FileSelect) ? static_cast<Context>(value) : Context::Normal;
+    return value <= static_cast<int>(Context::DialogChoice) ? static_cast<Context>(value) : Context::Normal;
 }
 
 // Mirrors GAMEMODE_* (z64save.h); TouchHud.cpp static_asserts the values.
@@ -36,33 +45,41 @@ struct ContextInputs {
     int gameMode = GameModeNormal;
     bool ocarina = false;           // Link is playing the ocarina
     bool cutscene = false;
-    bool dialogNeedsInput = false;
+    bool dialogActive = false;
+    bool dialogChoice = false;      // the waiting text box is a choice (yes/no, ...)
     bool horse = false;
+    bool paused = false;            // pause menu open
 };
 struct ContextOptions {
-    bool cutscenes = true, ocarina = true, horse = true, title = true;
+    bool cutscenes = true, ocarina = true, horse = true, title = true, dialogs = true;
 };
 
-// A text box needs the player only once it has finished typing and is waiting
-// (MSGMODE_TEXT_AWAIT_INPUT / _AWAIT_NEXT / _DONE). A box that is still typing,
-// or that ends by itself (fade, persistent, event), never asks for A.
+// A text box is "active" from the moment it opens (typing, delays, waiting for input,
+// handing over to the next box) until it closes. Only the final state of a box that ends
+// by itself (fade, persistent, event) is excluded, so those never keep the screen in dialogue mode.
+// Counting the typing phase keeps the buttons from blinking back for every box.
 // Values mirror MSGMODE_* and TEXTBOX_ENDTYPE_* (static_asserted in TouchHud.cpp).
-inline bool DialogNeedsInput(int msgMode, int endType) {
-    constexpr int awaitInput = 0x07, awaitNext = 0x34, done = 0x35;
+inline bool DialogActive(int msgMode, int endType) {
+    constexpr int textStart = 0x01, delayedBreak = 0x08, awaitNext = 0x34, done = 0x35;
     constexpr int persistent = 0x40, event = 0x50, fading = 0x60;
-    if (msgMode == awaitInput || msgMode == awaitNext) return true;
+    if ((msgMode >= textStart && msgMode <= delayedBreak) || msgMode == awaitNext) return true;
     return msgMode == done && endType != persistent && endType != event && endType != fading;
 }
+
+// Choice boxes (TEXTBOX_ENDTYPE_2_CHOICE / _3_CHOICE) need the stick as well as a tap.
+inline bool DialogIsChoice(int endType) { return endType == 0x10 || endType == 0x20; }
 
 inline Context ClassifyContext(const ContextInputs& in, const ContextOptions& options) {
     if (options.title) {
         if (in.gameMode == GameModeFileSelect) return Context::FileSelect;
         if (in.gameMode == GameModeTitle) return Context::Title;
     }
-    if (!in.inGame) return Context::Normal;
+    // No game screen yet (start-up, loading): nothing to press.
+    if (!in.inGame) return options.title ? Context::Boot : Context::Normal;
     if (options.ocarina && in.ocarina) return Context::Ocarina;
-    if (options.cutscenes && (in.cutscene || in.gameMode == GameModeCredits))
-        return in.dialogNeedsInput ? Context::CutsceneDialog : Context::Cutscene;
+    if (options.dialogs && in.dialogActive && !in.paused)
+        return in.dialogChoice ? Context::DialogChoice : Context::Dialog;
+    if (options.cutscenes && (in.cutscene || in.gameMode == GameModeCredits)) return Context::Cutscene;
     if (options.horse && in.horse) return Context::Horse;
     return Context::Normal;
 }
@@ -78,9 +95,9 @@ public:
         if (stable_ >= hold) { current_ = candidate_; stable_ = 0; }
         return current_;
     }
-    void Reset() { current_ = candidate_ = Context::Normal; stable_ = 0; }
+    void Reset() { current_ = candidate_ = Context::Boot; stable_ = 0; }
 private:
-    Context current_ = Context::Normal, candidate_ = Context::Normal;
+    Context current_ = Context::Boot, candidate_ = Context::Boot;
     int stable_ = 0;
 };
 }

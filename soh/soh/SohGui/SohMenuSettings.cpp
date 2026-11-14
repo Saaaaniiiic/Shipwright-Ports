@@ -872,9 +872,15 @@ void SohMenu::AddMenuSettings() {
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "Hides every touch button during scripted cutscenes and shows them again afterwards. "
             "Normal conversations, item pickups and doors are not cutscenes and keep every button. "
-            "When a cutscene text box is waiting for you, only A and B stay. "
-            "Text boxes that close by themselves never bring the buttons back. "
             "Note: this also hides Start, so skippable cutscenes cannot be skipped by touch while it is on."));
+    AddWidget(path, "Tap Screen for Dialogue", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Dynamic.Dialogs"))
+        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
+        .RaceDisable(false)
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "While a text box is open, every touch button is hidden and tapping anywhere on the screen acts as A. "
+            "With Skip Text on, holding the screen fast-forwards the text. "
+            "On choice boxes (Yes/No), drag on the left side to pick an answer and tap to confirm."));
     AddWidget(path, "Ocarina: Show Only Note Buttons", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Ocarina"))
         .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
@@ -888,14 +894,15 @@ void SohMenu::AddMenuSettings() {
         .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
-            "While riding Epona, hides the shield (R) and L buttons, which do nothing on horseback."));
+            "While riding Epona, shows only A, B, L and the left stick. "
+            "The C-up button appears only while Navi has something to say."));
     AddWidget(path, "Touch Title and File Select", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Title"))
         .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
-            "Title screen: tap anywhere to start. File select: only the D-pad, A, B and Start are shown, "
-            "and the D-pad moves the cursor."));
+            "No touch buttons while the app starts or on the title screen (tap anywhere to start). "
+            "File select shows only A, B and the left stick."));
     AddWidget(path, "Extra Item Slots", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("DpadEquips"))
         .Options(CheckboxOptions().Tooltip(

@@ -30,6 +30,16 @@ final class IntegratedTouchView extends View {
     private final SparseArray<Control> fingers = new SparseArray<>();
     // Title screen: any touch that misses the gear acts as A ("Press Start").
     private final Control titleTap = new Control("tap", "", TouchContext.A, -1, 0, -1, new RectF());
+    // Dialogue: a touch anywhere is A; holding it fast-forwards (B held) when "Skip Text" is on.
+    private final Control dialogTap = new Control("dialog", "", TouchContext.A, -1, 0, -1, new RectF());
+    private static final long HOLD_SKIP_MS = 350, TAP_MS = 300;
+    private boolean skipHeld;
+    private final Runnable holdSkip = () -> {
+        if (dialogTap.pointer >= 0 && !skipHeld && TouchContext.fromState(state) == TouchContext.DIALOG
+                && TouchContext.skipTextEnabled(state)) {
+            skipHeld = true; host.integratedTouchButton(TouchContext.B, true);
+        }
+    };
     private final RectF[] editorButtons = {new RectF(), new RectF(), new RectF(), new RectF()};
     private final float[] anchors = new float[30]; // B, three C items, four D-pad items, Navi/C-up, A action
     private TouchLayout placement = new TouchLayout(), saved;
@@ -49,6 +59,7 @@ final class IntegratedTouchView extends View {
         final int mask, slot, color, stick;
         final RectF bounds;
         int pointer = -1;
+        long downAt; // when the finger landed (a quick, still touch on the choice stick confirms with A)
         boolean navStick; // D-pad button currently acting as menu stick deflection (file select)
         float cx, cy, dx, dy;
         Control(String key, String label, int mask, int slot, int color, int stick, RectF bounds) {
@@ -251,12 +262,16 @@ final class IntegratedTouchView extends View {
             anchors[c.slot*3+2] = Math.min(c.bounds.width(), c.bounds.height())*.76f/getHeight();
             if (c.slot == 8) naviUtilityIcon = c.key.equals("fairy") || c.key.equals("map") || (mode==3&&c.key.equals("cu"));
         }
-        // The title screen must keep accepting taps even if the player hid the buttons with the eye.
-        boolean live = shown || TouchContext.fromState(state) == TouchContext.TITLE;
+        // The title screen and dialogue must keep accepting taps even if the player hid the buttons with the eye.
+        boolean live = shown || TouchContext.fromState(state) == TouchContext.TITLE || TouchContext.isDialog(state);
         host.integratedTouchLayout(anchors, enabled && live && !editing && !suspended && (state & 1) == 0, naviUtilityIcon);
     }
 
     private void release(Control c) {
+        if (c == dialogTap) {
+            removeCallbacks(holdSkip);
+            if (skipHeld) { host.integratedTouchButton(TouchContext.B, false); skipHeld = false; }
+        }
         if (c.navStick) { host.integratedTouchStick(0,0); c.navStick = false; }
         else if (c.stick == 0) host.integratedTouchStick(0,0);
         else if (c.stick == 1) host.integratedLook(0,0,false);
@@ -327,7 +342,7 @@ final class IntegratedTouchView extends View {
             // The N64 layout keeps its original C-buttons; free camera is a
             // touch-only right-side region with no circle or knob drawn in play.
             if (!editing && mode == 1 && c.stick == 1) continue;
-            if (!editing && (state&1)!=0 && !c.key.equals("settings") && !c.key.equals("eye")) continue;
+            if (!editing && (state&1)!=0 && !c.key.equals("eye")) continue; // the SoH menu has its own Close button
             boolean down=c.pointer>=0;
             if(c.stick>=0 && !editing && isFloating(c) && !down) continue;
             paint.setStyle(Paint.Style.FILL);
@@ -490,7 +505,7 @@ final class IntegratedTouchView extends View {
         if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN) {
             float x=e.getX(index),y=e.getY(index);Control chosen=null;
             for(Control c:controls)if(!c.key.equals("pad")&&placement.isVisible(c.key)&&c.stick<0&&c.pointer<0&&c.bounds.contains(x,y)&&
-                    contextShows(c)&&((state&1)==0||c.key.equals("settings")||c.key.equals("eye"))){chosen=c;break;}
+                    contextShows(c)&&((state&1)==0||c.key.equals("eye"))){chosen=c;break;}
             // Fixed sticks use their editable bounds. Floating sticks use their
             // screen side, not the decorative/editor circle's old hit rectangle.
             if(chosen==null && (state&1)==0)for(Control c:controls)
@@ -500,18 +515,29 @@ final class IntegratedTouchView extends View {
                         TouchLayout.floatingStickContains(c.stick,x/getWidth(),y/getHeight())){chosen=c;break;}
             // Title screen: a touch anywhere is "Press Start" (A).
             if(chosen==null && (state&1)==0 && TouchContext.fromState(state)==TouchContext.TITLE && titleTap.pointer<0) chosen=titleTap;
+            // Dialogue: a touch anywhere is A (the choice stick, if it was hit, took the touch above).
+            if(chosen==null && (state&1)==0 && TouchContext.isDialog(state) && dialogTap.pointer<0) chosen=dialogTap;
             if(chosen==null)return fingers.size()>0;
             if(chosen.key.equals("eye")){cancelInputs();shown=!shown;layoutControls();return true;}
             if(chosen.key.equals("settings")){cancelInputs();host.nativeGamepadBackPressed();return true;}
-            chosen.pointer=id;fingers.put(id,chosen);
+            chosen.pointer=id;chosen.downAt=e.getEventTime();fingers.put(id,chosen);
             if(chosen.stick>=0){if(isFloating(chosen)){chosen.cx=x;chosen.cy=y;}move(chosen,x,y);}
             else if((state&1)!=0)host.integratedMenuButton(chosen.mask,true);
             else if(TouchContext.navigatesFileSelect(state,chosen.mask,chosen.stick)){chosen.navStick=true;navigate(chosen.mask);}
             else host.integratedTouchButton(chosen.mask,true);
+            if(chosen==dialogTap&&TouchContext.fromState(state)==TouchContext.DIALOG&&TouchContext.skipTextEnabled(state))
+                postDelayed(holdSkip,HOLD_SKIP_MS);
             invalidate();return true;
         }
         if(action==MotionEvent.ACTION_MOVE){for(int i=0;i<e.getPointerCount();i++){Control c=fingers.get(e.getPointerId(i));if(c!=null&&c.stick>=0)move(c,e.getX(i),e.getY(i));}invalidate();return fingers.size()>0;}
-        if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP){Control c=fingers.get(id);if(c!=null){host.integratedMenuButton(c.mask,false);release(c);fingers.remove(id);invalidate();return true;}}
+        if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP){Control c=fingers.get(id);if(c!=null){
+            // On a choice box a quick, still touch on the stick (not a drag) confirms with A.
+            boolean confirm=action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP;
+            confirm=confirm&&c.stick==0&&TouchContext.fromState(state)==TouchContext.DIALOG_CHOICE
+                    &&e.getEventTime()-c.downAt<TAP_MS&&Math.hypot(c.dx,c.dy)<.3;
+            host.integratedMenuButton(c.mask,false);release(c);fingers.remove(id);
+            if(confirm){host.integratedTouchButton(TouchContext.A,true);host.integratedTouchButton(TouchContext.A,false);}
+            invalidate();return true;}}
         if(action==MotionEvent.ACTION_CANCEL){cancelInputs();layoutControls();return true;}
         return fingers.size()>0;
     }

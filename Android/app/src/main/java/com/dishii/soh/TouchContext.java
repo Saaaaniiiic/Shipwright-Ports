@@ -8,21 +8,36 @@ package com.dishii.soh;
  * button follows what it actually does.
  */
 final class TouchContext {
-    static final int NORMAL = 0, OCARINA = 1, CUTSCENE = 2, CUTSCENE_DIALOG = 3, HORSE = 4, TITLE = 5, FILE_SELECT = 6;
-    private static final int SHIFT = 18, MASK = 7;
-    private static final int FLAG_DPAD = 1 << 21, FLAG_CUSTOM = 1 << 22, FLAG_RIGHT_STICK = 1 << 23;
-    /** Every state bit that belongs to the context (field plus ocarina flags). */
-    static final int ALL_BITS = (MASK << SHIFT) | FLAG_DPAD | FLAG_CUSTOM | FLAG_RIGHT_STICK;
+    static final int NORMAL = 0, OCARINA = 1, CUTSCENE = 2, DIALOG = 3, HORSE = 4, TITLE = 5, FILE_SELECT = 6,
+            BOOT = 7, DIALOG_CHOICE = 8;
+    private static final int SHIFT = 18, MASK = 15;
+    private static final int FLAG_DPAD = 1 << 22, FLAG_CUSTOM = 1 << 23, FLAG_RIGHT_STICK = 1 << 24;
+    /** Set by the native hook from its first run; before that nothing is on screen yet. */
+    private static final int READY = 1 << 25, NAVI_CALLING = 1 << 26, SKIP_TEXT = 1 << 27;
+    /** Every state bit that belongs to the context (field plus flags). */
+    static final int ALL_BITS = (MASK << SHIFT) | FLAG_DPAD | FLAG_CUSTOM | FLAG_RIGHT_STICK | READY | NAVI_CALLING | SKIP_TEXT;
 
     static final int A = 0x8000, B = 0x4000, Z = 0x2000, START = 0x1000, L = 0x20, R = 0x10;
-    static final int C_BUTTONS = 1 | 2 | 4 | 8, NAVI = 0x20000;
+    static final int C_BUTTONS = 1 | 2 | 4 | 8, C_UP = 8, NAVI = 0x20000;
     static final int DPAD = 0x800 | 0x400 | 0x200 | 0x100;
 
     private TouchContext() {}
 
     static int fromState(int state) {
+        if ((state & READY) == 0) return BOOT;
         int value = (state >> SHIFT) & MASK;
-        return value <= FILE_SELECT ? value : NORMAL;
+        return value <= DIALOG_CHOICE ? value : NORMAL;
+    }
+
+    /** A text box is waiting for the player: the whole screen is the button. */
+    static boolean isDialog(int state) {
+        int context = fromState(state);
+        return context == DIALOG || context == DIALOG_CHOICE;
+    }
+
+    /** "Skip Text" is on, so holding the screen fast-forwards dialogue (B held). */
+    static boolean skipTextEnabled(int state) {
+        return (state & SKIP_TEXT) != 0;
     }
 
     static boolean isDpad(String key, int mask, int stick) {
@@ -53,19 +68,25 @@ final class TouchContext {
                 return (mask & keep) != 0;
             }
             case CUTSCENE:
-                return false;
-            case CUTSCENE_DIALOG:
-                return stick < 0 && (mask & (A | B)) != 0;
-            case HORSE:
-                // Epona: shield (R) and L do nothing, everything else is still in play.
-                return stick >= 0 || (mask & (L | R)) == 0;
+            case BOOT:
             case TITLE:
-                // The whole screen is a tap target; only the menu gear stays on screen.
-                return gear;
+                // Cutscenes and start-up show nothing; the title screen is one big tap target.
+                return false;
+            case DIALOG:
+                // Dialogue is driven by tapping the screen, not by A/B buttons.
+                return false;
+            case DIALOG_CHOICE:
+                // Choices also need the left stick to pick an answer.
+                return stick == 0;
+            case HORSE:
+                // Epona: A, B, L and the left stick, plus C-up only while Navi has something to say.
+                if (stick >= 0) return stick == 0;
+                if (mask == C_UP || (mask & NAVI) != 0) return (state & NAVI_CALLING) != 0;
+                return (mask & (A | B | L)) != 0;
             case FILE_SELECT:
-                if (stick >= 0) return floating;
-                if (gear || eye || dpad) return true;
-                return (mask & (A | B | START)) != 0;
+                // A, B and the left stick (floating or fixed) are all the menus need.
+                if (stick >= 0) return stick == 0;
+                return (mask & (A | B)) != 0;
             default:
                 return true;
         }

@@ -22,6 +22,7 @@ extern "C" {
 #include "functions.h"
 #include "macros.h"
 #include "variables.h"
+#include "src/overlays/actors/ovl_En_Ossan/z_en_ossan.h"
 extern PlayState* gPlayState;
 }
 // TouchHudContext.h mirrors these game constants so it can be unit-tested alone.
@@ -54,6 +55,13 @@ bool OcarinaPlaying() {
     return gPlayState && GET_PLAYER(gPlayState) &&
            (GET_PLAYER(gPlayState)->stateFlags2 & PLAYER_STATE2_OCARINA_PLAYING);
 }
+// A shopkeeper that has left OSSAN_STATE_IDLE is serving the player: greeting, browsing shelves,
+// asking to buy, handing over the item. Every shop (bazaar, potion, bombchu, Zora, Goron, masks) is an EnOssan.
+bool ShopActive() {
+    if (!gPlayState) return false;
+    const Actor* actor = Actor_Find(&gPlayState->actorCtx, ACTOR_EN_OSSAN, ACTORCAT_NPC);
+    return actor != nullptr && reinterpret_cast<const EnOssan*>(actor)->stateFlag != OSSAN_STATE_IDLE;
+}
 TouchHud::Context CurrentContext() {
     TouchHud::ContextOptions options;
     options.cutscenes = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Cutscenes"), 1) != 0;
@@ -61,6 +69,7 @@ TouchHud::Context CurrentContext() {
     options.horse = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Horse"), 1) != 0;
     options.title = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Title"), 1) != 0;
     options.dialogs = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Dialogs"), 1) != 0;
+    options.shops = CVarGetInteger(CVAR_SETTING("TouchControls.Dynamic.Shops"), 1) != 0;
     TouchHud::ContextInputs in;
     in.gameMode = gSaveContext.gameMode;
     in.inGame = gPlayState != nullptr;
@@ -75,10 +84,14 @@ TouchHud::Context CurrentContext() {
         in.dialogChoice = gPlayState->msgCtx.msgMode == MSGMODE_TEXT_DONE &&
                           TouchHud::DialogIsChoice(gPlayState->msgCtx.textboxEndType);
         in.paused = gPlayState->pauseCtx.state != 0;
+        in.shop = ShopActive();
     }
     return TouchHud::ClassifyContext(in, options);
 }
 void Init() {
+    // The "Classic" touch style was removed. A saved Classic (0) or missing style becomes Modern.
+    const int style = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0);
+    if (style < 1 || style > 3) CVarSetInteger(CVAR_SETTING("TouchControls.Style"), 3);
     GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameFrameUpdate>([] {
         const auto context = Ship::Context::GetRawInstance();
         const bool menu = context && context->GetWindow() && context->GetWindow()->GetGui() &&

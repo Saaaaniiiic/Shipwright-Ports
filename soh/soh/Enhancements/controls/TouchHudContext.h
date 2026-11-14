@@ -14,6 +14,7 @@ enum class Context : int {
     FileSelect,      // file select menus
     Boot,            // app start-up / loading: no game screen yet, nothing to press
     DialogChoice,    // a text box waiting for a choice (stick to choose, tap to confirm)
+    Shop,            // talking to / browsing a shopkeeper (EnOssan)
 };
 constexpr int ContextShift = 18;
 constexpr int ContextMask = 15;
@@ -34,7 +35,7 @@ inline int OcarinaFlagBits(bool dpad, bool custom, bool rightStick) {
 }
 inline Context ContextFromState(int state) {
     const int value = (state >> ContextShift) & ContextMask;
-    return value <= static_cast<int>(Context::DialogChoice) ? static_cast<Context>(value) : Context::Normal;
+    return value <= static_cast<int>(Context::Shop) ? static_cast<Context>(value) : Context::Normal;
 }
 
 // Mirrors GAMEMODE_* (z64save.h); TouchHud.cpp static_asserts the values.
@@ -48,10 +49,11 @@ struct ContextInputs {
     bool dialogActive = false;
     bool dialogChoice = false;      // the waiting text box is a choice (yes/no, ...)
     bool horse = false;
+    bool shop = false;              // a shopkeeper is busy with the player (not idle)
     bool paused = false;            // pause menu open
 };
 struct ContextOptions {
-    bool cutscenes = true, ocarina = true, horse = true, title = true, dialogs = true;
+    bool cutscenes = true, ocarina = true, horse = true, title = true, dialogs = true, shops = true;
 };
 
 // A text box is "active" from the moment it opens (typing, delays, waiting for input,
@@ -77,6 +79,9 @@ inline Context ClassifyContext(const ContextInputs& in, const ContextOptions& op
     // No game screen yet (start-up, loading): nothing to press.
     if (!in.inGame) return options.title ? Context::Boot : Context::Normal;
     if (options.ocarina && in.ocarina) return Context::Ocarina;
+    // Shops come first: their item cursor needs the stick, and the shopkeeper's text boxes are
+    // answered with A, so the dialogue "tap anywhere" mode would only get in the way.
+    if (options.shops && in.shop && !in.paused) return Context::Shop;
     if (options.dialogs && in.dialogActive && !in.paused)
         return in.dialogChoice ? Context::DialogChoice : Context::Dialog;
     if (options.cutscenes && (in.cutscene || in.gameMode == GameModeCredits)) return Context::Cutscene;

@@ -3,17 +3,17 @@
 int main() {
     using namespace TouchHud;
     const ContextOptions on;
-    ContextOptions off; off.cutscenes = off.ocarina = off.horse = off.title = off.dialogs = false;
+    ContextOptions off; off.cutscenes = off.ocarina = off.horse = off.title = off.dialogs = off.shops = false;
 
     // Bit packing never collides with the content bits (8..17) or the low flags.
-    for (int c = 0; c <= static_cast<int>(Context::DialogChoice); ++c) {
+    for (int c = 0; c <= static_cast<int>(Context::Shop); ++c) {
         const Context ctx = static_cast<Context>(c);
         const int bits = ContextBits(ctx);
         assert((bits & 0x3ffff) == 0);
         assert(ContextFromState(bits) == ctx);
         assert(ContextFromState(bits | 0x3ffff) == ctx);
     }
-    assert(ContextFromState(9 << ContextShift) == Context::Normal);   // unknown value
+    assert(ContextFromState(10 << ContextShift) == Context::Normal);  // unknown value
     assert(ContextFromState(15 << ContextShift) == Context::Normal);
     assert(ContextFromState(0) == Context::Normal);
     // Flags sit above the context field and never disturb it.
@@ -21,7 +21,7 @@ int main() {
     assert(OcarinaFlagBits(true, false, false) == OcarinaFlagDpad);
     assert(OcarinaFlagBits(true, true, true) == (OcarinaFlagDpad | OcarinaFlagCustom | OcarinaFlagRightStick));
     const int flags = OcarinaFlagDpad | OcarinaFlagCustom | OcarinaFlagRightStick | StateReady | StateNaviCalling | StateSkipText;
-    assert((ContextBits(Context::DialogChoice) & flags) == 0);
+    assert((ContextBits(Context::Shop) & flags) == 0);
     assert(ContextFromState(ContextBits(Context::Horse) | flags) == Context::Horse);
     assert((ContextAllBits & 0x3ffff) == 0);                        // content bits 8..17 stay clear
     assert(ContextAllBits == ((15 << ContextShift) | flags));
@@ -80,6 +80,20 @@ int main() {
     talk.horse = true;
     assert(ClassifyContext(talk, on) == Context::Dialog);
     assert(ClassifyContext(talk, noDialogs) == Context::Horse);
+
+    // Shops beat dialogue (their cursor needs the stick), but not the ocarina, and not the pause menu.
+    ContextInputs shop; shop.inGame = true; shop.shop = true;
+    assert(ClassifyContext(shop, on) == Context::Shop);
+    shop.dialogActive = true; shop.dialogChoice = true; shop.horse = true; shop.cutscene = true;
+    assert(ClassifyContext(shop, on) == Context::Shop);
+    shop.ocarina = true;
+    assert(ClassifyContext(shop, on) == Context::Ocarina);
+    shop.ocarina = false; shop.paused = true;
+    assert(ClassifyContext(shop, on) == Context::Cutscene);
+    shop.paused = false;
+    ContextOptions noShops = on; noShops.shops = false;
+    assert(ClassifyContext(shop, noShops) == Context::DialogChoice);
+    assert(ClassifyContext(shop, off) == Context::Normal);
 
     // Credits count as a cutscene.
     ContextInputs credits; credits.inGame = true; credits.gameMode = GameModeCredits;

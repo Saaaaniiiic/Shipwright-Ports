@@ -27,7 +27,12 @@ void BootCommands_Init() {
     CVarRegisterInteger(CVAR_SETTING("TouchControls.FaceButtonLayout"), 0);
     SOHiOS_SetTouchControlsEnabled(!CVarGetInteger(CVAR_SETTING("TouchControls.Disabled"), 0));
     SOHiOS_SetFaceButtonLayout(CVarGetInteger(CVAR_SETTING("TouchControls.FaceButtonLayout"), 0));
-    SOHiOS_ConfigureIntegratedTouch(CVarGetInteger(CVAR_SETTING("TouchControls.Style"),0),
+    // The "Classic" touch style was removed. A saved Classic (0) or missing style becomes Modern.
+    if (CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) < 1 ||
+        CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) > 3) {
+        CVarSetInteger(CVAR_SETTING("TouchControls.Style"), 3);
+    }
+    SOHiOS_ConfigureIntegratedTouch(CVarGetInteger(CVAR_SETTING("TouchControls.Style"),3),
         CVarGetFloat(CVAR_SETTING("TouchControls.Scale"),1),CVarGetFloat(CVAR_SETTING("TouchControls.Opacity"),.55f),
         CVarGetInteger(CVAR_SETTING("TouchControls.FloatingLeftStick"),1),
         CVarGetInteger(CVAR_SETTING("TouchControls.FloatingRightStick"),1),

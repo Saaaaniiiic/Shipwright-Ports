@@ -238,7 +238,9 @@ final class IntegratedTouchView extends View {
             }
             add("move","Move",0,-1,gray,mode==3?(left+75*unit)/getWidth():.15f,
                     mode==3?(getHeight()-bottom-75*unit)/getHeight():.80f,mode==3?150:132,mode==3?150:132,0);
-            if (mode != 1 || editing || (state & 16) != 0)
+            // The camera is a touch area on the right half of the screen: it is never drawn and has no
+            // handle in the layout editor (so it is only added while playing).
+            if (!editing && (mode != 1 || (state & 16) != 0))
                 add("look","Look",0,-1,gray,mode==3?.62f:.59f,mode==3?.62f:.69f,mode==3?150:120,mode==3?150:120,1);
         }
         face("eye","◉",0,-1,gray,mode==3?(getWidth()-right-15*unit)/getWidth():.95f,
@@ -297,7 +299,7 @@ final class IntegratedTouchView extends View {
                 dpadMask == 0x800 ? 85 : dpadMask == 0x400 ? -85 : 0);
     }
     private boolean isFloating(Control c) {
-        return c.stick == 0 ? floatingLeft : c.stick == 1 && floatingRight;
+        return c.stick == 0 ? floatingLeft : c.stick == 1; // the camera area is always floating
     }
     private static boolean isDpadDirection(String key) {
         return key.equals("du") || key.equals("dd") || key.equals("dl") || key.equals("dr");
@@ -328,10 +330,14 @@ final class IntegratedTouchView extends View {
         if (next != state) {
             // Icon/action changes affect lettering, not pointer ownership or held input.
             // A new dynamic context also drops held inputs, so a button that just vanished cannot stay pressed.
-            boolean sceneChanged = ((next ^ state) & (255 | TouchContext.ALL_BITS)) != 0;
-            if (((next ^ state) & (8|64|128)) != 0) bindings = host.integratedTouchBindings(mode);
+            // Navi calling (it starts and stops whenever the player targets something with Z) and the
+            // Skip Text flag only change what is drawn: they must not release the stick being held.
+            int changed = next ^ state;
+            boolean sceneChanged = (changed & (255 | TouchContext.CANCEL_BITS)) != 0;
+            if ((changed & (8|64|128)) != 0) bindings = host.integratedTouchBindings(mode);
             state=next;
             if (sceneChanged) { cancelInputs(); layoutControls(); }
+            else if ((changed & TouchContext.SOFT_BITS) != 0) publishLayout();
         }
         if (editing) { paint.setColor(0xee080b12); canvas.drawRect(0,0,getWidth(),getHeight(),paint); }
         drawModernDpad(canvas);
@@ -340,9 +346,8 @@ final class IntegratedTouchView extends View {
             boolean visible = controlVisible(c.key);
             if (!editing && !visible) continue;
             if (!contextShows(c)) continue;
-            // The N64 layout keeps its original C-buttons; free camera is a
-            // touch-only right-side region with no circle or knob drawn in play.
-            if (!editing && mode == 1 && c.stick == 1) continue;
+            // Free camera is a touch-only right-side region with no circle or knob.
+            if (c.stick == 1) continue;
             if (!editing && (state&1)!=0 && !c.key.equals("eye")) continue; // the SoH menu has its own Close button
             boolean down=c.pointer>=0;
             if(c.stick>=0 && !editing && isFloating(c) && !down) continue;
@@ -510,9 +515,9 @@ final class IntegratedTouchView extends View {
             // Fixed sticks use their editable bounds. Floating sticks use their
             // screen side, not the decorative/editor circle's old hit rectangle.
             if(chosen==null && (state&1)==0)for(Control c:controls)
-                if(placement.isVisible(c.key)&&c.stick>=0&&!isFloating(c)&&c.pointer<0&&contextShows(c)&&c.bounds.contains(x,y)){chosen=c;break;}
+                if((c.stick==1||placement.isVisible(c.key))&&c.stick>=0&&!isFloating(c)&&c.pointer<0&&contextShows(c)&&c.bounds.contains(x,y)){chosen=c;break;}
             if(chosen==null && (state&1)==0)for(Control c:controls)
-                if(placement.isVisible(c.key)&&c.stick>=0&&isFloating(c)&&c.pointer<0&&contextShows(c)&&
+                if((c.stick==1||placement.isVisible(c.key))&&c.stick>=0&&isFloating(c)&&c.pointer<0&&contextShows(c)&&
                         TouchLayout.floatingStickContains(c.stick,x/getWidth(),y/getHeight())){chosen=c;break;}
             // Title screen: a touch anywhere is "Press Start" (A).
             if(chosen==null && (state&1)==0 && TouchContext.fromState(state)==TouchContext.TITLE && titleTap.pointer<0) chosen=titleTap;

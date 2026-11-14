@@ -740,11 +740,48 @@ std::string Extractor::Mkdtemp() {
 
 static void MessageboxWorker();
 
+#ifdef __ANDROID__
+// The APK bundles the extractor YAML for every ROM version, but only the chosen version is copied out
+// (about 1,450 files instead of 20,000). Java copies it on demand and returns when it is in place.
+static bool EnsureAndroidExtractorVersion(const std::string& versionDir) {
+    auto* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    auto activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (!env || !activity) {
+        return false;
+    }
+    bool ok = false;
+    jclass cls = env->GetObjectClass(activity);
+    jmethodID method = cls ? env->GetMethodID(cls, "ensureExtractorVersionFromNative", "(Ljava/lang/String;)Z") : nullptr;
+    if (method && !env->ExceptionCheck()) {
+        jstring name = env->NewStringUTF(versionDir.c_str());
+        if (name) {
+            ok = env->CallBooleanMethod(activity, method, name) == JNI_TRUE;
+            env->DeleteLocalRef(name);
+        }
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        ok = false;
+    }
+    if (cls) {
+        env->DeleteLocalRef(cls);
+    }
+    env->DeleteLocalRef(activity);
+    return ok;
+}
+#endif
+
 bool Extractor::CallTorch(std::string installPath, std::string exportdir, std::atomic<size_t>* extractCount,
                           std::atomic<size_t>* totalExtract) {
     char portVersion[18]; // 5 digits for int16_max (x3) + separators + terminator
     snprintf(portVersion, 18, "%d.%d.%d", gBuildVersionMajor, gBuildVersionMinor, gBuildVersionPatch);
 
+#ifdef __ANDROID__
+    if (!EnsureAndroidExtractorVersion(GetTorchVersionDir())) {
+        SPDLOG_ERROR("Could not copy the extractor files for {}", GetTorchVersionDir());
+        return false;
+    }
+#endif
     std::string srcDir = std::filesystem::absolute(installPath).string() + "/assets";
     exportdir = std::filesystem::absolute(exportdir).string();
     // Work this out in the temporary folder

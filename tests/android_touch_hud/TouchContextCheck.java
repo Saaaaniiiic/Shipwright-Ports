@@ -17,7 +17,7 @@ public final class TouchContextCheck {
     public static void main(String[] args) {
         final int N = TouchContext.NORMAL, O = TouchContext.OCARINA, C = TouchContext.CUTSCENE,
                 D = TouchContext.DIALOG, DC = TouchContext.DIALOG_CHOICE, H = TouchContext.HORSE,
-                T = TouchContext.TITLE, F = TouchContext.FILE_SELECT, B = TouchContext.BOOT;
+                T = TouchContext.TITLE, F = TouchContext.FILE_SELECT, B = TouchContext.BOOT, S = TouchContext.SHOP;
         final int[] everyMask = {0x8000, 0x4000, 1, 2, 4, 8, 0x2000, 0x20, 0x10, 0x1000, 0x10000, 0x800, 0x400, 0x200, 0x100, 0x20000};
         final String[] everyKey = {"a", "b", "cl", "z", "l", "r", "start", "map", "settings", "eye", "pad", "du"};
 
@@ -26,7 +26,8 @@ public final class TouchContextCheck {
         check(TouchContext.fromState(O << 18) == B, "context without READY is still boot");
         check(TouchContext.fromState(st(N, 0)) == N, "ready normal");
         check(TouchContext.fromState(st(O, 0x3ff00 | 0xff)) == O, "content bits must not leak");
-        check(TouchContext.fromState(st(9, 0)) == N && TouchContext.fromState(st(15, 0)) == N, "unknown context falls back to normal");
+        check(TouchContext.fromState(st(10, 0)) == N && TouchContext.fromState(st(15, 0)) == N, "unknown context falls back to normal");
+        check(TouchContext.fromState(st(S, 0)) == S, "shop");
         check(TouchContext.fromState(st(DC, DPAD_FLAG | CUSTOM_FLAG | RSTICK_FLAG | NAVI_CALLING | SKIP_TEXT)) == DC, "flags never disturb the context");
         check((TouchContext.ALL_BITS & 0x3ffff) == 0, "context bits must not touch low/content bits");
         check(TouchContext.ALL_BITS == ((15 << 18) | DPAD_FLAG | CUSTOM_FLAG | RSTICK_FLAG | READY | NAVI_CALLING | SKIP_TEXT), "ALL_BITS");
@@ -79,15 +80,31 @@ public final class TouchContextCheck {
         check(shows(DC, 0, "move", 0, 0, true, 2) && shows(DC, 0, "move", 0, 0, false, 2), "choice keeps the left stick");
         check(!shows(DC, 0, "look", 0, 1, true, 2) && !shows(DC, 0, "look", 0, 1, false, 2), "choice hides the right stick");
 
-        // Epona: only A, B, L and the left stick; C-up only while Navi has something to say.
-        check(btn(H, 0, "a", 0x8000) && btn(H, 0, "b", 0x4000) && btn(H, 0, "l", 0x20), "horse keeps A/B/L");
-        for (int m : new int[]{1, 2, 4, 0x2000, 0x10, 0x1000, 0x10000, 0x800, 0x400, 0x200, 0x100})
+        // Epona: only A, B, Z, L and the left stick; C-up only while Navi has something to say.
+        check(btn(H, 0, "a", 0x8000) && btn(H, 0, "b", 0x4000) && btn(H, 0, "l", 0x20) && btn(H, 0, "z", 0x2000), "horse keeps A/B/Z/L");
+        for (int m : new int[]{1, 2, 4, 0x10, 0x1000, 0x10000, 0x800, 0x400, 0x200, 0x100})
             check(!btn(H, NAVI_CALLING | DPAD_FLAG, "x", m), "horse hides mask " + m);
         check(!btn(H, 0, "settings", 0) && !btn(H, 0, "eye", 0) && !btn(H, 0, "pad", 0), "horse hides gear/eye/pad");
         check(!btn(H, 0, "cu", 8) && !btn(H, 0, "fairy", 0x20000), "horse hides C-up while Navi is quiet");
         check(btn(H, NAVI_CALLING, "cu", 8) && btn(H, NAVI_CALLING, "fairy", 0x20000), "horse shows C-up when Navi calls");
         check(shows(H, 0, "move", 0, 0, false, 2) && shows(H, 0, "move", 0, 0, true, 2), "horse keeps the steering stick");
         check(!shows(H, 0, "look", 0, 1, false, 2) && !shows(H, 0, "look", 0, 1, true, 2), "horse hides the right stick");
+
+        // Shops: A, B and the left stick (the item cursor), nothing else.
+        check(btn(S, 0, "a", 0x8000) && btn(S, 0, "b", 0x4000), "shop keeps A/B");
+        for (int m : new int[]{1, 2, 4, 8, 0x2000, 0x20, 0x10, 0x1000, 0x10000, 0x20000, 0x800, 0x400, 0x200, 0x100})
+            check(!btn(S, DPAD_FLAG | CUSTOM_FLAG | NAVI_CALLING, "x", m), "shop hides mask " + m);
+        check(!btn(S, 0, "settings", 0) && !btn(S, 0, "eye", 0) && !btn(S, 0, "pad", 0), "shop hides gear/eye/pad");
+        check(shows(S, 0, "move", 0, 0, true, 2) && shows(S, 0, "move", 0, 0, false, 2), "shop keeps the left stick");
+        check(!shows(S, 0, "look", 0, 1, true, 2) && !shows(S, 0, "look", 0, 1, false, 2), "shop hides the camera area");
+
+        // Z-targeting toggles Navi's call all the time: that must never drop the stick the player is holding.
+        check((TouchContext.CANCEL_BITS & (NAVI_CALLING | SKIP_TEXT)) == 0, "soft bits do not cancel inputs");
+        check((TouchContext.SOFT_BITS & NAVI_CALLING) != 0 && (TouchContext.SOFT_BITS & SKIP_TEXT) != 0, "soft bits");
+        for (int ctx = 0; ctx <= S; ++ctx)
+            check((TouchContext.CANCEL_BITS & (ctx << 18)) == (ctx << 18), "context bits do cancel inputs " + ctx);
+        check((TouchContext.CANCEL_BITS & (DPAD_FLAG | CUSTOM_FLAG | RSTICK_FLAG | READY)) == (DPAD_FLAG | CUSTOM_FLAG | RSTICK_FLAG | READY),
+                "option flags and READY cancel inputs");
 
         // Title: nothing at all (the whole screen is a tap target).
         for (String key : everyKey) for (int m : everyMask) check(!btn(T, DPAD_FLAG, key, m), "title hides " + key + m);

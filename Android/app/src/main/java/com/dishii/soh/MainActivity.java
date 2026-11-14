@@ -71,11 +71,7 @@ public class MainActivity extends SDLActivity{
     private static final String PREF_TOUCH_CONTROLS_DISABLED = "touchControlsDisabled";
     // Legacy key name: true means the touch controls are hidden, not visible.
     private static final String PREF_TOUCH_CONTROLS_HIDDEN = "controlsVisible";
-    private static final String PREF_TOUCH_FACE_BUTTON_LAYOUT = "touchFaceButtonLayout";
     private static final String PREF_TOUCH_LEFT_STICK_FLOATING = "touchLeftStickFloating";
-    private static final int TOUCH_FACE_BUTTON_LAYOUT_ABXY = 0;
-    private static final int TOUCH_FACE_BUTTON_LAYOUT_BAYX = 1;
-    private static final int TOUCH_FACE_BUTTON_LAYOUT_GAMECUBE = 2;
     private static final String SUPPORT_FILES_VERSION_MARKER = ".android_support_files_version";
     // Bump only for support archive/layout changes. Extractor YAML is content-versioned separately.
     private static final String SUPPORT_FILES_VERSION = "soh-9.3.1-torch-support-2";
@@ -640,8 +636,10 @@ public class MainActivity extends SDLActivity{
                 if (!targetAssetsDir.mkdirs() && !targetAssetsDir.isDirectory()) {
                     throw new IOException("Failed to create assets folder: " + targetAssetsDir.getAbsolutePath());
                 }
-                AssetCopyUtil.copyAssetsToExternal(this, "assets", targetAssetsDir.getAbsolutePath());
-                Log.i("setupFiles", "Extractor files copied for revision " + extractorVersion);
+                // Only config.yml is needed up front. Each ROM version's YAML (about 1,450 of the 20,000
+                // files) is copied by ensureExtractorVersionFromNative once a ROM has been chosen.
+                AssetCopyUtil.copyTopLevelFiles(this, "assets", targetAssetsDir.getAbsolutePath());
+                Log.i("setupFiles", "Extractor config copied for revision " + extractorVersion);
             } else {
                 Log.i("setupFiles", "Reusing unchanged extractor files");
             }
@@ -689,6 +687,40 @@ public class MainActivity extends SDLActivity{
 
         dismissSetupProgressDialog();
         setupLatch.countDown();
+    }
+
+    private static final String VERSION_COPIED_MARKER = ".copied";
+
+    /**
+     * Called by the native extractor (on its own thread) once it knows which ROM version it is
+     * extracting. Copies that version's YAML from the APK if it is not there yet.
+     */
+    public synchronized boolean ensureExtractorVersionFromNative(String versionDir) {
+        if (versionDir == null || !versionDir.matches("[A-Za-z0-9_\\-]+")) {
+            Log.e("setupFiles", "Rejected extractor version folder: " + versionDir);
+            return false;
+        }
+        String revision = getBundledExtractorVersion();
+        if (revision == null) return false;
+        // The native side reads the YAML from the data root it was given (currentDataRootPath).
+        File root = currentDataRootPath != null && !currentDataRootPath.isEmpty()
+                ? new File(currentDataRootPath) : getTargetRootFolder();
+        File versionFolder = new File(new File(root, "assets"), versionDir);
+        File marker = new File(versionFolder, VERSION_COPIED_MARKER);
+        if (revision.equals(ExtractorAssetState.readMarker(marker))) return true;
+        try {
+            long start = System.currentTimeMillis();
+            AssetCopyUtil.copyAssetsToExternal(this, "assets/" + versionDir, versionFolder.getAbsolutePath());
+            try (OutputStream out = new FileOutputStream(marker)) {
+                out.write(revision.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            Log.i("setupFiles", "Extractor files for " + versionDir + " copied in "
+                    + (System.currentTimeMillis() - start) + " ms");
+            return true;
+        } catch (IOException e) {
+            Log.e("setupFiles", "Failed to copy extractor files for " + versionDir, e);
+            return false;
+        }
     }
 
     private void migrateLegacyAppDataIfNeeded(File targetRootFolder) {
@@ -924,24 +956,6 @@ public class MainActivity extends SDLActivity{
         return super.dispatchKeyEvent(event);
     }
 
-    private Button button1, button2, button3, button4;
-    private Button buttonA, buttonB, buttonX, buttonY;
-    private Button buttonDpadUp, buttonDpadDown, buttonDpadLeft, buttonDpadRight;
-    private Button buttonLB, buttonRB, buttonZL, buttonZR, buttonStart, buttonBack;
-    private Button buttonToggle;
-    private FrameLayout leftJoystick;
-    private ImageView leftJoystickKnob;
-    private View overlayView;
-    private ViewGroup buttonGroup;
-    private int leftStickPointerId = MotionEvent.INVALID_POINTER_ID;
-    private int rightStickPointerId = MotionEvent.INVALID_POINTER_ID;
-    private float leftStickStartX;
-    private float leftStickStartY;
-    private float leftStickFixedX = Float.NaN;
-    private float leftStickFixedY = Float.NaN;
-    private float rightStickStartX;
-    private float rightStickStartY;
-    private boolean touchControlsMenuVisible = false;
     private IntegratedTouchView integratedTouchView;
     private boolean integratedLookHeld;
     native int integratedTouchState();
@@ -952,17 +966,16 @@ public class MainActivity extends SDLActivity{
     native void integratedTouchLayout(float[] anchors, boolean active, boolean naviUtilityIcon);
 
     public void setIntegratedTouchFromNative(int mode, float scale, float opacity, boolean transparentSticks, boolean floatingRight) {
-        preferences.edit().putInt("integratedTouchMode", Math.max(0, Math.min(3, mode)))
+        // The right stick is gone (the camera is a touch area), so floatingRight is accepted but unused.
+        preferences.edit().putInt("integratedTouchMode", Math.max(1, Math.min(3, mode)))
                 .putFloat("integratedTouchScale", scale).putFloat("integratedTouchOpacity", opacity)
-                .putBoolean("touchTransparentSticks", transparentSticks)
-                .putBoolean("touchRightStickFloating", floatingRight).apply();
+                .putBoolean("touchTransparentSticks", transparentSticks).apply();
         runOnUiThread(this::applyTouchControlsVisibility);
     }
     public void editIntegratedTouchFromNative() {
         runOnUiThread(() -> {
-            if (preferences.getInt("integratedTouchMode", 0) == 0 ||
-                    preferences.getBoolean(PREF_TOUCH_CONTROLS_DISABLED, false)) {
-                Toast.makeText(this, "Select an integrated touch preset and enable touch controls first.", Toast.LENGTH_LONG).show();
+            if (preferences.getBoolean(PREF_TOUCH_CONTROLS_DISABLED, false)) {
+                Toast.makeText(this, "Enable touch controls first.", Toast.LENGTH_LONG).show();
             } else if (integratedTouchView != null) integratedTouchView.startEditing();
         });
     }
@@ -991,400 +1004,7 @@ public class MainActivity extends SDLActivity{
         integratedLookHeld = true;
     }
 
-    // Function to set up the controller overlay (inflate layout and initialize buttons)
-    private void setupControllerOverlay() {
-        // Inflate the touchcontrol_overlay layout
-        LayoutInflater inflater = (LayoutInflater) getSystemService(LAYOUT_INFLATER_SERVICE);
-        overlayView = inflater.inflate(R.layout.touchcontrol_overlay, null);
-
-        // Set layout params for overlayView to control positioning and sizing
-        FrameLayout.LayoutParams layoutParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-        );
-        overlayView.setLayoutParams(layoutParams);
-        // Add overlay view to the main layout (you may need to add it to a container like FrameLayout)
-        ViewGroup view = (ViewGroup) findViewById(android.R.id.content);
-        view.addView(overlayView);
-        view.setKeepScreenOn(true);
-
-        buttonGroup = overlayView.findViewById(R.id.button_group);
-
-        buttonA = overlayView.findViewById(R.id.buttonA);
-        buttonB = overlayView.findViewById(R.id.buttonB);
-        buttonX = overlayView.findViewById(R.id.buttonX);
-        buttonY = overlayView.findViewById(R.id.buttonY);
-        applyTouchFaceButtonLayout(preferences.getInt(
-                PREF_TOUCH_FACE_BUTTON_LAYOUT, TOUCH_FACE_BUTTON_LAYOUT_ABXY));
-
-        buttonDpadUp = overlayView.findViewById(R.id.buttonDpadUp);
-        buttonDpadDown = overlayView.findViewById(R.id.buttonDpadDown);
-        buttonDpadLeft = overlayView.findViewById(R.id.buttonDpadLeft);
-        buttonDpadRight = overlayView.findViewById(R.id.buttonDpadRight);
-
-        buttonLB = overlayView.findViewById(R.id.buttonLB);
-        buttonRB = overlayView.findViewById(R.id.buttonRB);
-        buttonZL = overlayView.findViewById(R.id.buttonZL);
-        buttonZR = overlayView.findViewById(R.id.buttonZR);
-
-        buttonStart = overlayView.findViewById(R.id.buttonStart);
-        buttonBack = overlayView.findViewById(R.id.buttonBack);
-
-        buttonToggle = overlayView.findViewById(R.id.buttonToggle);
-
-        // Initialize joysticks and joystick knobs from the inflated layout
-        leftJoystick = overlayView.findViewById(R.id.left_joystick);
-        leftJoystickKnob = overlayView.findViewById(R.id.left_joystick_knob);
-
-        FrameLayout leftScreenArea = overlayView.findViewById(R.id.left_screen_area);
-        FrameLayout rightScreenArea = overlayView.findViewById(R.id.right_screen_area);
-
-        setupCButtons(buttonDpadUp, ControllerButtons.BUTTON_DPAD_UP);
-        setupCButtons(buttonDpadDown, ControllerButtons.BUTTON_DPAD_DOWN);
-        setupCButtons(buttonDpadLeft, ControllerButtons.BUTTON_DPAD_LEFT);
-        setupCButtons(buttonDpadRight, ControllerButtons.BUTTON_DPAD_RIGHT);
-
-        addTouchListener(buttonLB, ControllerButtons.BUTTON_LB);
-        addTouchListener(buttonRB, ControllerButtons.BUTTON_RB);
-        addTouchListener(buttonZL, ControllerButtons.AXIS_LT);
-        addTouchListener(buttonZR, ControllerButtons.AXIS_RT);
-
-        addTouchListener(buttonStart, ControllerButtons.BUTTON_START);
-        // BACK uses nativeGamepadBackPressed directly; setButton(BUTTON_BACK) feeds ImGuiKey_GamepadBack, unreliable when SDL Gamepads list is empty.
-        buttonBack.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN) {
-                nativeGamepadBackPressed();
-            }
-            return true;
-        });
-
-
-        setupFloatingJoystick(leftScreenArea);
-        setupLookAround(rightScreenArea);
-
-        setupToggleButton(buttonToggle,buttonGroup);
-        integratedTouchView = new IntegratedTouchView(this);
-        view.addView(integratedTouchView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-        applyTouchLeftStickMode();
-        applyTouchControlsVisibility();
-
-        // Exclude Back/Start from gesture nav zones (they sit at screen edges in landscape).
-        // Must be called on each button in its own local coordinates.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ViewTreeObserver.OnGlobalLayoutListener gestureListener = new ViewTreeObserver.OnGlobalLayoutListener() {
-                @Override
-                public void onGlobalLayout() {
-                    overlayView.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                    Rect selfRect = new Rect(0, 0, buttonBack.getWidth(), buttonBack.getHeight());
-                    buttonBack.setSystemGestureExclusionRects(Arrays.asList(selfRect));
-                    selfRect = new Rect(0, 0, buttonStart.getWidth(), buttonStart.getHeight());
-                    buttonStart.setSystemGestureExclusionRects(Arrays.asList(selfRect));
-                }
-            };
-            overlayView.getViewTreeObserver().addOnGlobalLayoutListener(gestureListener);
-        }
-
-    }
-
-    public void setTouchControlsDisabledFromNative(boolean disabled) {
-        preferences.edit().putBoolean(PREF_TOUCH_CONTROLS_DISABLED, disabled).apply();
-        runOnUiThread(this::applyTouchControlsVisibility);
-    }
-
-    public void setTouchFaceButtonLayoutFromNative(int layout) {
-        int normalizedLayout = layout >= TOUCH_FACE_BUTTON_LAYOUT_ABXY &&
-                layout <= TOUCH_FACE_BUTTON_LAYOUT_GAMECUBE
-                ? layout : TOUCH_FACE_BUTTON_LAYOUT_ABXY;
-        preferences.edit().putInt(PREF_TOUCH_FACE_BUTTON_LAYOUT, normalizedLayout).apply();
-        runOnUiThread(() -> applyTouchFaceButtonLayout(normalizedLayout));
-    }
-
-    public void setTouchLeftStickFloatingFromNative(boolean floating) {
-        preferences.edit().putBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, floating).apply();
-        runOnUiThread(() -> { applyTouchLeftStickMode(); applyTouchControlsVisibility(); });
-    }
-
-    public void setTouchControlsMenuVisibleFromNative(boolean visible) {
-        runOnUiThread(() -> {
-            touchControlsMenuVisible = visible;
-            applyTouchControlsVisibility();
-        });
-    }
-
-    private void applyTouchLeftStickMode() {
-        if (leftJoystick == null) {
-            return;
-        }
-        boolean floating = preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true);
-        if (!floating && !Float.isNaN(leftStickFixedX)) {
-            leftJoystick.setX(leftStickFixedX);
-            leftJoystick.setY(leftStickFixedY);
-            leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f - leftJoystickKnob.getWidth() / 2.0f);
-            leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f - leftJoystickKnob.getHeight() / 2.0f);
-        }
-        leftJoystick.setVisibility(floating ? View.INVISIBLE : View.VISIBLE);
-    }
-
-    private void applyTouchFaceButtonLayout(int layout) {
-        if (buttonA == null || buttonB == null || buttonX == null || buttonY == null) {
-            return;
-        }
-
-        FrameLayout actionButtonCluster = overlayView.findViewById(R.id.action_button_cluster);
-        if (layout == TOUCH_FACE_BUTTON_LAYOUT_GAMECUBE) {
-            setViewSize(actionButtonCluster, 200, 170);
-            configureFaceButton(buttonA, 70, 70, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 20, 0, 0, 20);
-            configureFaceButton(buttonB, 46, 46, Gravity.BOTTOM | Gravity.START, 30, 0, 0, 20);
-            configureFaceButton(buttonX, 46, 46, Gravity.TOP | Gravity.END, 0, 37, 0, 0);
-            configureFaceButton(buttonY, 46, 46, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, 15, 0, 0);
-        } else if (layout == TOUCH_FACE_BUTTON_LAYOUT_BAYX) {
-            setViewSize(actionButtonCluster, 132, 132);
-            configureFaceButton(buttonA, 44, 44, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
-            configureFaceButton(buttonB, 44, 44, Gravity.CENTER_VERTICAL | Gravity.END, 0, 0, 0, 0);
-            configureFaceButton(buttonX, 44, 44, Gravity.CENTER_VERTICAL | Gravity.START, 0, 0, 0, 0);
-            configureFaceButton(buttonY, 44, 44, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
-        } else {
-            setViewSize(actionButtonCluster, 132, 132);
-            configureFaceButton(buttonB, 44, 44, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
-            configureFaceButton(buttonA, 44, 44, Gravity.CENTER_VERTICAL | Gravity.END, 0, 0, 0, 0);
-            configureFaceButton(buttonY, 44, 44, Gravity.CENTER_VERTICAL | Gravity.START, 0, 0, 0, 0);
-            configureFaceButton(buttonX, 44, 44, Gravity.TOP | Gravity.CENTER_HORIZONTAL, 0, 0, 0, 0);
-        }
-
-        // Layout selection only moves the buttons. A button displaying a letter must
-        // always emit that same logical SDL button, regardless of its screen position.
-        addTouchListener(buttonA, ControllerButtons.BUTTON_A);
-        addTouchListener(buttonB, ControllerButtons.BUTTON_B);
-        addTouchListener(buttonX, ControllerButtons.BUTTON_X);
-        addTouchListener(buttonY, ControllerButtons.BUTTON_Y);
-    }
-
-    private void configureFaceButton(Button button, int widthDp, int heightDp, int gravity,
-                                     int marginStartDp, int marginTopDp,
-                                     int marginEndDp, int marginBottomDp) {
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) button.getLayoutParams();
-        params.width = dpToPixels(widthDp);
-        params.height = dpToPixels(heightDp);
-        params.gravity = gravity;
-        int marginStart = dpToPixels(marginStartDp);
-        int marginEnd = dpToPixels(marginEndDp);
-        params.setMargins(marginStart, dpToPixels(marginTopDp), marginEnd, dpToPixels(marginBottomDp));
-        params.setMarginStart(marginStart);
-        params.setMarginEnd(marginEnd);
-        button.setLayoutParams(params);
-    }
-
-    private void setViewSize(View view, int widthDp, int heightDp) {
-        ViewGroup.LayoutParams params = view.getLayoutParams();
-        params.width = dpToPixels(widthDp);
-        params.height = dpToPixels(heightDp);
-        view.setLayoutParams(params);
-    }
-
-    private int dpToPixels(float dp) {
-        return Math.round(dp * getResources().getDisplayMetrics().density);
-    }
-
-    private void setTouchButtonPressed(Button button, boolean pressed) {
-        button.setPressed(pressed);
-        float scale = pressed ? 0.92f : 1.0f;
-        button.animate().scaleX(scale).scaleY(scale).setDuration(60).start();
-    }
-
-    private void applyTouchControlsVisibility() {
-        if (overlayView == null) {
-            return;
-        }
-
-        boolean touchControlsDisabled = preferences.getBoolean(PREF_TOUCH_CONTROLS_DISABLED, false);
-        boolean transparentSticks = preferences.getBoolean("touchTransparentSticks", false);
-        if (leftJoystick != null && leftJoystick.getBackground() != null) {
-            leftJoystick.getBackground().mutate().setAlpha(
-                    transparentSticks || preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true) ? 0 : 255);
-        }
-        int integratedMode = preferences.getInt("integratedTouchMode", 0);
-        if (integratedTouchView != null) {
-            integratedTouchView.configure(integratedMode, !touchControlsDisabled,
-                    preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true),
-                    preferences.getBoolean("touchRightStickFloating", true),
-                    preferences.getFloat("integratedTouchScale", 1),
-                    preferences.getFloat("integratedTouchOpacity", .55f), transparentSticks);
-            if (integratedMode != 0) {
-                overlayView.setVisibility(View.GONE);
-                DisableTouchArea();
-                return;
-            }
-        }
-        overlayView.setVisibility(touchControlsDisabled ? View.GONE : View.VISIBLE);
-
-        if (buttonGroup != null) {
-            boolean controlsHidden = preferences.getBoolean(PREF_TOUCH_CONTROLS_HIDDEN, false);
-            buttonGroup.setVisibility(controlsHidden ? View.INVISIBLE : View.VISIBLE);
-            if (controlsHidden || touchControlsDisabled || touchControlsMenuVisible) {
-                DisableTouchArea();
-                overlayView.setOnTouchListener(null);
-            } else {
-                EnableTouchArea();
-                overlayView.setOnTouchListener((view, e) -> true);
-            }
-        }
-
-        if (buttonToggle != null) {
-            boolean toggleVisible = preferences.getBoolean("toggleButtonVisible", true);
-            buttonToggle.setVisibility(!touchControlsDisabled && toggleVisible ? View.VISIBLE : View.GONE);
-        }
-    }
-
-    private void setupToggleButton(Button button, ViewGroup uiGroup){
-        button.setOnClickListener(v -> {
-            boolean currentlyHidden = uiGroup.getVisibility() != View.VISIBLE;
-            preferences.edit().putBoolean(PREF_TOUCH_CONTROLS_HIDDEN, !currentlyHidden).apply();
-            applyTouchControlsVisibility();
-        });
-    }
-
-    // Function to set a touch listener for each button
-    private void addTouchListener(Button button, int buttonNum) {
-        // dir>=4: face button nav keys (4=A/select, 5=B/back). -1 = no nav injection.
-        int navDir = (buttonNum == ControllerButtons.BUTTON_A) ? 4
-                   : (buttonNum == ControllerButtons.BUTTON_B) ? 5 : -1;
-        button.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        setButton(buttonNum, true);
-                        if (navDir >= 0) nativeMenuNavKey(navDir, true);
-                        setTouchButtonPressed(button, true);
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        setButton(buttonNum, false);
-                        if (navDir >= 0) nativeMenuNavKey(navDir, false);
-                        setTouchButtonPressed(button, false);
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        setButton(buttonNum, false);
-                        if (navDir >= 0) nativeMenuNavKey(navDir, false);
-                        setTouchButtonPressed(button, false);
-                        return true;
-                }
-                return false;
-            }
-        });
-    }
-
-    private void setupCButtons(Button button, int dpadButton) {
-        button.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        setButton(dpadButton, true);
-                        nativeMenuNavKey(dpadButton - ControllerButtons.BUTTON_DPAD_UP, true);
-                        setTouchButtonPressed(button, true);
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        setButton(dpadButton, false);
-                        nativeMenuNavKey(dpadButton - ControllerButtons.BUTTON_DPAD_UP, false);
-                        setTouchButtonPressed(button, false);
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        setButton(dpadButton, false);
-                        nativeMenuNavKey(dpadButton - ControllerButtons.BUTTON_DPAD_UP, false);
-                        setTouchButtonPressed(button, false);
-                        return true;
-                }
-                return false;
-            }
-        });
-    }
-
-    boolean TouchAreaEnabled = true;
-
-    void DisableTouchArea(){
-        TouchAreaEnabled = false;
-        resetLeftStick();
-        resetRightTouch();
-    }
-    void EnableTouchArea(){
-        TouchAreaEnabled = true;
-        applyTouchLeftStickMode();
-    }
-
-    void SetToggleButtonVisible(boolean visible) {
-        runOnUiThread(() -> {
-            preferences.edit().putBoolean("toggleButtonVisible", visible).apply();
-            applyTouchControlsVisibility();
-        });
-    }
-
-    private void setupFloatingJoystick(FrameLayout touchArea) {
-        final float maxRadius = dpToPixels(51);
-        leftJoystick.post(() -> {
-            leftStickFixedX = leftJoystick.getX();
-            leftStickFixedY = leftJoystick.getY();
-            applyTouchLeftStickMode();
-        });
-        touchArea.setOnTouchListener((view, event) -> {
-            if (!TouchAreaEnabled) {
-                return false;
-            }
-            switch (event.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    boolean floating = preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true);
-                    if (floating) {
-                        leftStickStartX = event.getX();
-                        leftStickStartY = event.getY();
-                        leftJoystick.setX(leftStickStartX - leftJoystick.getWidth() / 2.0f);
-                        leftJoystick.setY(leftStickStartY - leftJoystick.getHeight() / 2.0f);
-                    } else {
-                        leftStickStartX = leftJoystick.getX() + leftJoystick.getWidth() / 2.0f;
-                        leftStickStartY = leftJoystick.getY() + leftJoystick.getHeight() / 2.0f;
-                    }
-                    leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f - leftJoystickKnob.getWidth() / 2.0f);
-                    leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f - leftJoystickKnob.getHeight() / 2.0f);
-                    leftJoystick.setVisibility(View.VISIBLE);
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    float deltaX = event.getX() - leftStickStartX;
-                    float deltaY = event.getY() - leftStickStartY;
-                    float distance = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-                    if (distance > maxRadius && distance > 0.0f) {
-                        float scale = maxRadius / distance;
-                        deltaX *= scale;
-                        deltaY *= scale;
-                    }
-                    leftJoystickKnob.setX(leftJoystick.getWidth() / 2.0f + deltaX -
-                            leftJoystickKnob.getWidth() / 2.0f);
-                    leftJoystickKnob.setY(leftJoystick.getHeight() / 2.0f + deltaY -
-                            leftJoystickKnob.getHeight() / 2.0f);
-                    setAxis(ControllerButtons.AXIS_LX, (short) (deltaX / maxRadius * Short.MAX_VALUE));
-                    setAxis(ControllerButtons.AXIS_LY, (short) (deltaY / maxRadius * Short.MAX_VALUE));
-                    return true;
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL:
-                    setAxis(ControllerButtons.AXIS_LX, (short) 0);
-                    setAxis(ControllerButtons.AXIS_LY, (short) 0);
-                    if (preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true)) {
-                        leftJoystick.setVisibility(View.INVISIBLE);
-                    }
-                    return true;
-                default:
-                    return true;
-            }
-        });
-    }
-
-    private void resetLeftStick() {
-        leftStickPointerId = MotionEvent.INVALID_POINTER_ID;
-        setAxis(ControllerButtons.AXIS_LX, (short) 0);
-        setAxis(ControllerButtons.AXIS_LY, (short) 0);
-        leftJoystick.setVisibility(View.INVISIBLE);
-    }
-
     private void resetRightTouch() {
-        rightStickPointerId = MotionEvent.INVALID_POINTER_ID;
         setAxis(ControllerButtons.AXIS_RX, (short) 0);
         setAxis(ControllerButtons.AXIS_RY, (short) 0);
         setCameraTouchActive(false);
@@ -1395,142 +1015,43 @@ public class MainActivity extends SDLActivity{
         }
     }
 
-    private void setupLookAround(FrameLayout rightScreenArea) {
-        rightScreenArea.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                if (!TouchAreaEnabled) {
-                    return false;
-                }
-
-                switch (event.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                    case MotionEvent.ACTION_POINTER_DOWN: {
-                        if (rightStickPointerId == MotionEvent.INVALID_POINTER_ID) {
-                            int pointerIndex = event.getActionIndex();
-                            rightStickPointerId = event.getPointerId(pointerIndex);
-                            boolean floating = preferences.getBoolean("touchRightStickFloating", true);
-                            rightStickStartX = floating ? event.getX(pointerIndex) : v.getWidth() / 2.0f;
-                            rightStickStartY = floating ? event.getY(pointerIndex) : v.getHeight() * .7f;
-                        }
-                        if (mIsAiming) {
-                            setCameraTouchActive(true);
-                            setItemButtonPulse();
-                            setItemButtonHeld(true);
-                        }
-                        return true;
-                    }
-
-                    case MotionEvent.ACTION_MOVE: {
-                        int pointerIndex = event.findPointerIndex(rightStickPointerId);
-                        if (pointerIndex >= 0) {
-                            float deltaX = event.getX(pointerIndex) - rightStickStartX;
-                            float deltaY = event.getY(pointerIndex) - rightStickStartY;
-                            float maxRadius = dpToPixels(51);
-                            float distance = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-                            if (distance > maxRadius && distance > 0.0f) {
-                                float scale = maxRadius / distance;
-                                deltaX *= scale;
-                                deltaY *= scale;
-                            }
-
-                            if (mIsAiming) {
-                                // SOH's item-aiming path also handles the touch-to-fire gesture.
-                                setAxis(ControllerButtons.AXIS_RX, (short) 0);
-                                setAxis(ControllerButtons.AXIS_RY, (short) 0);
-                                setCameraTouchActive(true);
-                                setCameraState(0, deltaX / maxRadius * 170.0f);
-                                setCameraState(1, deltaY / maxRadius * 170.0f);
-                            } else {
-                                // Match 2Ship: use the real virtual right-stick axes so
-                                // controller deadzone, sensitivity, and inversion are shared.
-                                setCameraTouchActive(false);
-                                setCameraState(0, 0.0f);
-                                setCameraState(1, 0.0f);
-                                setAxis(ControllerButtons.AXIS_RX,
-                                        (short) (deltaX / maxRadius * Short.MAX_VALUE));
-                                setAxis(ControllerButtons.AXIS_RY,
-                                        (short) (deltaY / maxRadius * Short.MAX_VALUE));
-                            }
-                        }
-                        return true;
-                    }
-
-                    case MotionEvent.ACTION_POINTER_UP:
-                    case MotionEvent.ACTION_UP:
-                        if (event.getPointerId(event.getActionIndex()) == rightStickPointerId) {
-                            resetRightTouch();
-                        }
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        resetRightTouch();
-                        return true;
-                    default:
-                        return true;
-                }
-            }
-        });
+    // The integrated touch overlay is the only touch interface.
+    private void setupControllerOverlay() {
+        ViewGroup view = (ViewGroup) findViewById(android.R.id.content);
+        view.setKeepScreenOn(true);
+        integratedTouchView = new IntegratedTouchView(this);
+        view.addView(integratedTouchView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        applyTouchControlsVisibility();
     }
 
+    public void setTouchControlsDisabledFromNative(boolean disabled) {
+        preferences.edit().putBoolean(PREF_TOUCH_CONTROLS_DISABLED, disabled).apply();
+        runOnUiThread(this::applyTouchControlsVisibility);
+    }
 
+    public void setTouchLeftStickFloatingFromNative(boolean floating) {
+        preferences.edit().putBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, floating).apply();
+        runOnUiThread(this::applyTouchControlsVisibility);
+    }
 
+    private void applyTouchControlsVisibility() {
+        if (integratedTouchView == null) {
+            return;
+        }
+        boolean touchControlsDisabled = preferences.getBoolean(PREF_TOUCH_CONTROLS_DISABLED, false);
+        int mode = preferences.getInt("integratedTouchMode", 3);
+        if (mode < 1 || mode > 3) mode = 3; // an old "Classic" setting becomes Modern
+        integratedTouchView.configure(mode, !touchControlsDisabled,
+                preferences.getBoolean(PREF_TOUCH_LEFT_STICK_FLOATING, true),
+                true, // the camera touch area is always floating
+                preferences.getFloat("integratedTouchScale", 1),
+                preferences.getFloat("integratedTouchOpacity", .55f),
+                preferences.getBoolean("touchTransparentSticks", false));
+    }
 
-
-    // Function to set joystick movement with reset to center when not touched
-    private void setupJoystick(FrameLayout joystickLayout, ImageView joystickKnob, boolean isLeft) {
-        joystickLayout.post(() -> {
-            // Calculate the joystick center once, before any events
-            final float joystickCenterX = joystickLayout.getWidth() / 2f;
-            final float joystickCenterY = joystickLayout.getHeight() / 2f;
-
-            joystickLayout.setOnTouchListener(new View.OnTouchListener() {
-                @Override
-                public boolean onTouch(View v, MotionEvent event) {
-                    switch (event.getAction()) {
-                        case MotionEvent.ACTION_DOWN:
-                        case MotionEvent.ACTION_MOVE:
-                            // Calculate the joystick movement and move the knob
-                            float deltaX = event.getX() - joystickCenterX;
-                            float deltaY = event.getY() - joystickCenterY;
-
-                            // Clamp the joystick movement to prevent it from going outside the area
-                            float maxRadius = joystickLayout.getWidth() / 2f - joystickKnob.getWidth() / 2f;
-                            float distance = (float) Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-                            if (distance > maxRadius) {
-                                float scale = maxRadius / distance;
-                                deltaX *= scale;
-                                deltaY *= scale;
-                            }
-
-                            joystickKnob.setX(joystickCenterX + deltaX - joystickKnob.getWidth() / 2f);
-                            joystickKnob.setY(joystickCenterY + deltaY - joystickKnob.getHeight() / 2f);
-
-                            // Send joystick values to native C code
-                            short x = (short) (deltaX / maxRadius * Short.MAX_VALUE);
-                            short y = (short) (deltaY / maxRadius * Short.MAX_VALUE);
-
-                            // Send X-axis and Y-axis values
-                            setAxis(isLeft ? ControllerButtons.AXIS_LX : ControllerButtons.AXIS_RX, x); // X-axis
-                            setAxis(isLeft ? ControllerButtons.AXIS_LY : ControllerButtons.AXIS_RY, y); // Y-axis
-                            break;
-
-                        case MotionEvent.ACTION_UP:
-                        case MotionEvent.ACTION_CANCEL:
-                            // Reset joystick knob to the center position (ensure it's placed correctly)
-                            joystickKnob.setX(joystickCenterX - joystickKnob.getWidth() / 2f);
-                            joystickKnob.setY(joystickCenterY - joystickKnob.getHeight() / 2f);
-
-                            // Reset joystick values to 0 when released or canceled
-                            setAxis(isLeft ? ControllerButtons.AXIS_LX : ControllerButtons.AXIS_RX, (short) 0); // X-axis
-                            setAxis(isLeft ? ControllerButtons.AXIS_LY : ControllerButtons.AXIS_RY, (short) 0); // Y-axis
-                            break;
-                    }
-                    return true;
-                }
-            });
-        });
-
-
+    void SetToggleButtonVisible(boolean visible) {
+        // Called by the engine; the eye button belongs to the integrated overlay now.
     }
 
     public void startRumble(int lowIntensity, int highIntensity) {

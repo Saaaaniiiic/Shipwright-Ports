@@ -9,13 +9,17 @@ package com.dishii.soh;
  */
 final class TouchContext {
     static final int NORMAL = 0, OCARINA = 1, CUTSCENE = 2, DIALOG = 3, HORSE = 4, TITLE = 5, FILE_SELECT = 6,
-            BOOT = 7, DIALOG_CHOICE = 8;
+            BOOT = 7, DIALOG_CHOICE = 8, SHOP = 9;
     private static final int SHIFT = 18, MASK = 15;
     private static final int FLAG_DPAD = 1 << 22, FLAG_CUSTOM = 1 << 23, FLAG_RIGHT_STICK = 1 << 24;
     /** Set by the native hook from its first run; before that nothing is on screen yet. */
     private static final int READY = 1 << 25, NAVI_CALLING = 1 << 26, SKIP_TEXT = 1 << 27;
+    /** Flags that only change what is drawn. They must never drop fingers that are already down. */
+    static final int SOFT_BITS = NAVI_CALLING | SKIP_TEXT;
     /** Every state bit that belongs to the context (field plus flags). */
-    static final int ALL_BITS = (MASK << SHIFT) | FLAG_DPAD | FLAG_CUSTOM | FLAG_RIGHT_STICK | READY | NAVI_CALLING | SKIP_TEXT;
+    static final int ALL_BITS = (MASK << SHIFT) | FLAG_DPAD | FLAG_CUSTOM | FLAG_RIGHT_STICK | READY | SOFT_BITS;
+    /** Bits whose change replaces the whole button set, so held inputs are released. */
+    static final int CANCEL_BITS = ALL_BITS & ~SOFT_BITS;
 
     static final int A = 0x8000, B = 0x4000, Z = 0x2000, START = 0x1000, L = 0x20, R = 0x10;
     static final int C_BUTTONS = 1 | 2 | 4 | 8, C_UP = 8, NAVI = 0x20000;
@@ -26,7 +30,7 @@ final class TouchContext {
     static int fromState(int state) {
         if ((state & READY) == 0) return BOOT;
         int value = (state >> SHIFT) & MASK;
-        return value <= DIALOG_CHOICE ? value : NORMAL;
+        return value <= SHOP ? value : NORMAL;
     }
 
     /** A text box is waiting for the player: the whole screen is the button. */
@@ -78,11 +82,15 @@ final class TouchContext {
             case DIALOG_CHOICE:
                 // Choices also need the left stick to pick an answer.
                 return stick == 0;
+            case SHOP:
+                // Shops: A, B and the left stick (the item cursor), nothing else.
+                if (stick >= 0) return stick == 0;
+                return (mask & (A | B)) != 0;
             case HORSE:
-                // Epona: A, B, L and the left stick, plus C-up only while Navi has something to say.
+                // Epona: A, B, Z, L and the left stick, plus C-up only while Navi has something to say.
                 if (stick >= 0) return stick == 0;
                 if (mask == C_UP || (mask & NAVI) != 0) return (state & NAVI_CALLING) != 0;
-                return (mask & (A | B | L)) != 0;
+                return (mask & (A | B | Z | L)) != 0;
             case FILE_SELECT:
                 // A, B and the left stick (floating or fixed) are all the menus need.
                 if (stick >= 0) return stick == 0;

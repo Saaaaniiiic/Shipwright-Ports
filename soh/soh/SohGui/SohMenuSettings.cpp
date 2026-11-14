@@ -79,16 +79,12 @@ static const std::map<int32_t, const char*> bootSequenceLabels = {
 };
 
 #if defined(__ANDROID__) || (defined(__IOS__) && !defined(__TVOS__))
-static const std::map<int32_t, const char*> touchFaceButtonLayoutMap = {
-    { 0, "ABXY (Nintendo)" },
-    { 1, "BAYX (Xbox)" },
-    { 2, "GC Layout" },
-};
+
 #endif
 
 #if defined(__ANDROID__) || (defined(__IOS__) && !defined(__TVOS__))
 static const std::map<int32_t, const char*> touchStyleMap = {
-    { 0, "Classic" }, { 1, "N64" }, { 2, "GameCube" }, { 3, "Modern" },
+    { 1, "N64" }, { 2, "GameCube" }, { 3, "Modern" },
 };
 
 static const std::map<int32_t, const char*> touchActionMap = {
@@ -135,7 +131,7 @@ static void SetMobileIntegratedTouch() {
     jclass type = env->GetObjectClass(activity);
     jmethodID method = env->GetMethodID(type, "setIntegratedTouchFromNative", "(IFFZZ)V");
     if (method) env->CallVoidMethod(activity, method,
-        std::clamp(CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0), 0, 3),
+        std::clamp(CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 3), 1, 3),
         CVarGetFloat(CVAR_SETTING("TouchControls.Scale"), 1),
         CVarGetFloat(CVAR_SETTING("TouchControls.Opacity"), .55f),
         static_cast<jboolean>(CVarGetInteger(CVAR_SETTING("TouchControls.TransparentSticks"), 0) != 0),
@@ -143,7 +139,7 @@ static void SetMobileIntegratedTouch() {
     if (env->ExceptionCheck()) env->ExceptionClear();
     env->DeleteLocalRef(type); env->DeleteLocalRef(activity);
 #else
-    SOHiOS_ConfigureIntegratedTouch(CVarGetInteger(CVAR_SETTING("TouchControls.Style"),0),
+    SOHiOS_ConfigureIntegratedTouch(std::clamp(CVarGetInteger(CVAR_SETTING("TouchControls.Style"),3),1,3),
         CVarGetFloat(CVAR_SETTING("TouchControls.Scale"),1),CVarGetFloat(CVAR_SETTING("TouchControls.Opacity"),.55f),
         CVarGetInteger(CVAR_SETTING("TouchControls.FloatingLeftStick"),1),
         CVarGetInteger(CVAR_SETTING("TouchControls.FloatingRightStick"),1),
@@ -191,29 +187,6 @@ static void SetMobileTouchControlsDisabled(bool disabled) {
     env->DeleteLocalRef(activity);
 #else
     SOHiOS_SetTouchControlsEnabled(!disabled);
-#endif
-}
-
-static void SetMobileTouchFaceButtonLayout(int32_t layout) {
-#ifdef __ANDROID__
-    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
-    jobject activity = (jobject)SDL_AndroidGetActivity();
-    if (env == nullptr || activity == nullptr) {
-        return;
-    }
-
-    jclass activityClass = env->GetObjectClass(activity);
-    if (activityClass != nullptr) {
-        jmethodID method =
-            env->GetMethodID(activityClass, "setTouchFaceButtonLayoutFromNative", "(I)V");
-        if (method != nullptr) {
-            env->CallVoidMethod(activity, method, static_cast<jint>(layout));
-        }
-        env->DeleteLocalRef(activityClass);
-    }
-    env->DeleteLocalRef(activity);
-#else
-    SOHiOS_SetFaceButtonLayout(layout);
 #endif
 }
 
@@ -807,33 +780,18 @@ void SohMenu::AddMenuSettings() {
         .CVar(CVAR_SETTING("TouchControls.Style"))
         .RaceDisable(false)
         .Callback([](WidgetInfo&) { SetMobileIntegratedTouch(); })
-        .Options(ComboboxOptions().DefaultIndex(0).ComboMap(touchStyleMap).Tooltip(
-            "Classic preserves the existing controls and HUD. Integrated presets place live item icons on the touch buttons."));
+        .Options(ComboboxOptions().DefaultIndex(3).ComboMap(touchStyleMap).Tooltip(
+            "Places live item icons on the touch buttons. N64, GameCube and Modern follow their console layouts."));
     AddWidget(path, "Edit Integrated Touch Layout", WIDGET_BUTTON)
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false).Callback([](WidgetInfo&) { EditMobileIntegratedTouch(); });
     AddWidget(path, "Size", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar(CVAR_SETTING("TouchControls.Scale"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false).Callback([](WidgetInfo&) { SetMobileIntegratedTouch(); })
         .Options(FloatSliderOptions().Min(.75f).Max(1.5f).DefaultValue(1).IsPercentage());
     AddWidget(path, "Opacity", WIDGET_CVAR_SLIDER_FLOAT)
         .CVar(CVAR_SETTING("TouchControls.Opacity"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false).Callback([](WidgetInfo&) { SetMobileIntegratedTouch(); })
         .Options(FloatSliderOptions().Min(.15f).Max(1).DefaultValue(.55f).IsPercentage());
-    AddWidget(path, "Touch Face Buttons", WIDGET_CVAR_COMBOBOX)
-        .CVar(CVAR_SETTING("TouchControls.FaceButtonLayout"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) != 0; })
-        .RaceDisable(false)
-        .Callback([](WidgetInfo& info) {
-            SetMobileTouchFaceButtonLayout(
-                CVarGetInteger(CVAR_SETTING("TouchControls.FaceButtonLayout"), 0));
-        })
-        .Options(ComboboxOptions()
-                     .ComboMap(touchFaceButtonLayoutMap)
-                     .DefaultIndex(0)
-                     .Tooltip("Choose ABXY (Nintendo), BAYX (Xbox), or GC Layout touch-button placement."));
     AddWidget(path, "Floating Left Stick", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.FloatingLeftStick"))
         .RaceDisable(false)
@@ -850,13 +808,6 @@ void SohMenu::AddMenuSettings() {
         .Options(CheckboxOptions().Tooltip(
             "Hides fixed stick backgrounds and outlines while keeping the small position indicators visible. "
             "Floating sticks are always transparent. The layout editor still shows their bounds."));
-    AddWidget(path, "Floating Right Stick", WIDGET_CVAR_CHECKBOX)
-        .CVar(CVAR_SETTING("TouchControls.FloatingRightStick"))
-        .RaceDisable(false)
-        .Callback([](WidgetInfo&) { SetMobileIntegratedTouch(); })
-        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
-            "Sets the right camera stick's origin where you touch inside its area. "
-            "When disabled, its origin is fixed. Independent of Floating Left Stick."));
     AddWidget(path, "Disable Touch Controls", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Disabled"))
         .RaceDisable(false)
@@ -867,7 +818,6 @@ void SohMenu::AddMenuSettings() {
     // Dynamic button sets for the integrated presets. The overlay reads these every game update.
     AddWidget(path, "Hide Controls in Cutscenes", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Cutscenes"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "Hides every touch button during scripted cutscenes and shows them again afterwards. "
@@ -875,15 +825,18 @@ void SohMenu::AddMenuSettings() {
             "Note: this also hides Start, so skippable cutscenes cannot be skipped by touch while it is on."));
     AddWidget(path, "Tap Screen for Dialogue", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Dialogs"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "While a text box is open, every touch button is hidden and tapping anywhere on the screen acts as A. "
             "With Skip Text on, holding the screen fast-forwards the text. "
             "On choice boxes (Yes/No), drag on the left side to pick an answer and tap to confirm."));
+    AddWidget(path, "Shops: Show Only A, B and Stick", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Dynamic.Shops"))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip(
+            "While a shopkeeper is serving you, shows only A, B and the left stick (to move the item cursor)."));
     AddWidget(path, "Ocarina: Show Only Note Buttons", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Ocarina"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "While playing the ocarina, shows only the note buttons (A and the C-buttons) and B to leave. "
@@ -891,14 +844,12 @@ void SohMenu::AddMenuSettings() {
             "Floating sticks keep working for pitch bend."));
     AddWidget(path, "Epona: Hide Unused Buttons", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Horse"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "While riding Epona, shows only A, B, L and the left stick. "
             "The C-up button appears only while Navi has something to say."));
     AddWidget(path, "Touch Title and File Select", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Title"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "No touch buttons while the app starts or on the title screen (tap anywhere to start). "
@@ -918,19 +869,17 @@ void SohMenu::AddMenuSettings() {
             "This is the existing shared item-unequip enhancement."));
 
     path.column = SECTION_COLUMN_2;
-    AddWidget(path, "Touch Button Assignments", WIDGET_SEPARATOR_TEXT)
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; });
+    AddWidget(path, "Touch Button Assignments", WIDGET_SEPARATOR_TEXT);
     static const std::map<int32_t,const char*> touchCStickModes = {{0,"C-buttons"},{1,"Camera"}};
     AddWidget(path,"C-stick Mode",WIDGET_CVAR_COMBOBOX)
         .CVar(CVAR_SETTING("TouchControls.GameCubeStickCamera"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"),0) != 2; })
+        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"),3) != 2; })
         .Callback([](WidgetInfo&) { SetMobileIntegratedTouch(); })
         .Options(ComboboxOptions().DefaultIndex(0).ComboMap(touchCStickModes).Tooltip(
             "C-buttons or camera, never both. Camera requires Free Camera in Controls. "
             "During ocarina play, follows Right Stick Ocarina Playback."));
     AddWidget(path, "Enable Manual Jump (Experimental)", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("ManualJump"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .Callback([](WidgetInfo&) { SetMobileIntegratedTouch(); })
         .Options(CheckboxOptions().Tooltip(
             "The existing Manual Jump enhancement. Enables grounded jumps and disables automatic ledge jumps. "
@@ -943,7 +892,7 @@ void SohMenu::AddMenuSettings() {
     for (int style=1; style<=3; ++style) {
         AddWidget(path,"Jump Button##TouchJump"+std::to_string(style),WIDGET_CVAR_COMBOBOX)
             .CVar(TouchHud::JumpCvar(style))
-            .PreFunc([style](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"),0) != style; })
+            .PreFunc([style](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"),3) != style; })
             .RaceDisable(false)
             .Callback([](WidgetInfo&) {
                 SetMobileIntegratedTouch();
@@ -957,14 +906,13 @@ void SohMenu::AddMenuSettings() {
     static const std::map<int32_t,const char*> touchVaultModes = {{0,"Automatic"},{1,"Manual"}};
     AddWidget(path,"Vaulting Mode",WIDGET_CVAR_COMBOBOX)
         .CVar(CVAR_ENHANCEMENT("ManualJumpVaultMode"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"),0) == 0; })
         .Options(ComboboxOptions().DefaultIndex(1).ComboMap(touchVaultModes).Tooltip(
             "The shared Manual Jump gameplay option: Automatic keeps native vaults and short step-ups. "
             "Manual requires Jump while moving into these obstacles, with a 180 ms buffer. "
             "Tall climbs and A-button climbing remain unchanged. Manual Jump must be enabled."));
     AddWidget(path, "Navi Button", WIDGET_CVAR_COMBOBOX)
         .CVar(CVAR_SETTING("TouchControls.GameCubeNaviLocation"))
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) != 2; })
+        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 3) != 2; })
         .RaceDisable(false)
         .Callback([](WidgetInfo&) {
             int location = CVarGetInteger(CVAR_SETTING("TouchControls.GameCubeNaviLocation"), 0);
@@ -994,7 +942,7 @@ void SohMenu::AddMenuSettings() {
         AddWidget(path, std::string(labels[style-1][i]) + "##TouchBinding" + std::to_string(style) + "_" + TouchHud::Keys[i], WIDGET_CVAR_COMBOBOX)
             .CVar(TouchHud::BindingCvar(style, i))
             .PreFunc([style, i](WidgetInfo& info) {
-                info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) != style ||
+                info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 3) != style ||
                     (i == 14 && style != 2) ||
                     (i == 15 && style == 1 && !CVarGetInteger(CVAR_CHEAT("MoonJumpOnL"),0));
                 bool jumpOverride = CVarGetInteger(CVAR_ENHANCEMENT("ManualJump"),0) &&
@@ -1021,10 +969,9 @@ void SohMenu::AddMenuSettings() {
                 "check Settings > General > Reset Button Combination before assigning it."));
     }
     AddWidget(path, "Restore Default Assignments", WIDGET_BUTTON)
-        .PreFunc([](WidgetInfo& info) { info.isHidden = CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0) == 0; })
         .RaceDisable(false)
         .Callback([](WidgetInfo&) {
-            int style = std::clamp(CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 0), 1, 3);
+            int style = std::clamp(CVarGetInteger(CVAR_SETTING("TouchControls.Style"), 3), 1, 3);
             for (int i=0; i<TouchHud::BindingCount; ++i)
                 CVarSetInteger(TouchHud::BindingCvar(style, i), TouchHud::DefaultAction(style, i));
             CVarSetInteger(TouchHud::JumpCvar(style), 0);
@@ -1033,7 +980,6 @@ void SohMenu::AddMenuSettings() {
         }).Options(ButtonOptions().Tooltip("Restores only this preset's touch assignments. Positions, sizes and physical controllers are unchanged."));
 
     // Keep the platform's persisted overlay state aligned with the native CVars after relaunches.
-    SetMobileTouchFaceButtonLayout(CVarGetInteger(CVAR_SETTING("TouchControls.FaceButtonLayout"), 0));
     SetMobileIntegratedTouch();
     SetMobileTouchLeftStickFloating(
         CVarGetInteger(CVAR_SETTING("TouchControls.FloatingLeftStick"), 1) != 0);

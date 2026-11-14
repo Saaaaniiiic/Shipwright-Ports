@@ -34,13 +34,13 @@ final class IntegratedTouchView extends View {
     private final Control dialogTap = new Control("dialog", "", TouchContext.A, -1, 0, -1, new RectF());
     private static final long HOLD_SKIP_MS = 350, TAP_MS = 300;
     private boolean skipHeld;
-    private final Runnable holdSkip = () -> {
-        // `this.state`: the field is declared further down, so the bare name is an illegal forward reference.
-        if (dialogTap.pointer >= 0 && !skipHeld && TouchContext.fromState(this.state) == TouchContext.DIALOG
-                && TouchContext.skipTextEnabled(this.state)) {
+    private final Runnable holdSkip = this::startSkipHold;
+    private void startSkipHold() {
+        if (dialogTap.pointer >= 0 && !skipHeld && TouchContext.fromState(state) == TouchContext.DIALOG
+                && TouchContext.skipTextEnabled(state)) {
             skipHeld = true; host.integratedTouchButton(TouchContext.B, true);
         }
-    };
+    }
     private final RectF[] editorButtons = {new RectF(), new RectF(), new RectF(), new RectF()};
     private final float[] anchors = new float[30]; // B, three C items, four D-pad items, Navi/C-up, A action
     private TouchLayout placement = new TouchLayout(), saved;

@@ -35,8 +35,9 @@ final class IntegratedTouchView extends View {
     private static final long HOLD_SKIP_MS = 350, TAP_MS = 300;
     private boolean skipHeld;
     private final Runnable holdSkip = () -> {
-        if (dialogTap.pointer >= 0 && !skipHeld && TouchContext.fromState(state) == TouchContext.DIALOG
-                && TouchContext.skipTextEnabled(state)) {
+        // `this.state`: the field is declared further down, so the bare name is an illegal forward reference.
+        if (dialogTap.pointer >= 0 && !skipHeld && TouchContext.fromState(this.state) == TouchContext.DIALOG
+                && TouchContext.skipTextEnabled(this.state)) {
             skipHeld = true; host.integratedTouchButton(TouchContext.B, true);
         }
     };

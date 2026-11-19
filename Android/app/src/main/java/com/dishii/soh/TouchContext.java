@@ -21,7 +21,7 @@ final class TouchContext {
     /** Bits whose change replaces the whole button set, so held inputs are released. */
     static final int CANCEL_BITS = ALL_BITS & ~SOFT_BITS;
 
-    static final int A = 0x8000, B = 0x4000, Z = 0x2000, START = 0x1000, L = 0x20, R = 0x10;
+    static final int A = 0x8000, B = 0x4000, Z = 0x2000, START = 0x1000, L = 0x20, R = 0x10, MAP = 0x10000;
     static final int C_BUTTONS = 1 | 2 | 4 | 8, C_UP = 8, NAVI = 0x20000;
     static final int DPAD = 0x800 | 0x400 | 0x200 | 0x100;
 
@@ -87,10 +87,12 @@ final class TouchContext {
                 if (stick >= 0) return stick == 0;
                 return (mask & (A | B)) != 0;
             case HORSE:
-                // Epona: A, B, Z, L and the left stick, plus C-up only while Navi has something to say.
+                // Epona: A, B, Z, L, Start, Map, Settings and the left stick, plus C-up only while Navi
+                // has something to say.
                 if (stick >= 0) return stick == 0;
+                if (gear) return true;
                 if (mask == C_UP || (mask & NAVI) != 0) return (state & NAVI_CALLING) != 0;
-                return (mask & (A | B | Z | L)) != 0;
+                return (mask & (A | B | Z | L | START | MAP)) != 0;
             case FILE_SELECT:
                 // A, B and the left stick (floating or fixed) are all the menus need.
                 if (stick >= 0) return stick == 0;

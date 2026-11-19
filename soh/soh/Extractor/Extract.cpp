@@ -741,9 +741,10 @@ std::string Extractor::Mkdtemp() {
 static void MessageboxWorker();
 
 #ifdef __ANDROID__
-// The APK bundles the extractor YAML for every ROM version, but only the chosen version is copied out
-// (about 1,450 files instead of 20,000). Java copies it on demand and returns when it is in place.
-static bool EnsureAndroidExtractorVersion(const std::string& versionDir) {
+// The APK bundles the extractor YAML for every ROM version, but only the chosen version is needed
+// (about 1,450 files instead of 20,000). Java copies config.yml and that version into the app's private
+// storage (fast, unlike shared storage) and returns the folder the extractor should read.
+static bool EnsureAndroidExtractorVersion(const std::string& versionDir, std::string& srcDir) {
     auto* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
     auto activity = static_cast<jobject>(SDL_AndroidGetActivity());
     if (!env || !activity) {
@@ -751,11 +752,24 @@ static bool EnsureAndroidExtractorVersion(const std::string& versionDir) {
     }
     bool ok = false;
     jclass cls = env->GetObjectClass(activity);
-    jmethodID method = cls ? env->GetMethodID(cls, "ensureExtractorVersionFromNative", "(Ljava/lang/String;)Z") : nullptr;
+    jmethodID method =
+        cls ? env->GetMethodID(cls, "ensureExtractorVersionFromNative", "(Ljava/lang/String;)Ljava/lang/String;")
+            : nullptr;
     if (method && !env->ExceptionCheck()) {
         jstring name = env->NewStringUTF(versionDir.c_str());
         if (name) {
-            ok = env->CallBooleanMethod(activity, method, name) == JNI_TRUE;
+            auto result = static_cast<jstring>(env->CallObjectMethod(activity, method, name));
+            if (result && !env->ExceptionCheck()) {
+                const char* chars = env->GetStringUTFChars(result, nullptr);
+                if (chars) {
+                    srcDir = chars;
+                    ok = !srcDir.empty();
+                    env->ReleaseStringUTFChars(result, chars);
+                }
+            }
+            if (result) {
+                env->DeleteLocalRef(result);
+            }
             env->DeleteLocalRef(name);
         }
     }
@@ -776,13 +790,13 @@ bool Extractor::CallTorch(std::string installPath, std::string exportdir, std::a
     char portVersion[18]; // 5 digits for int16_max (x3) + separators + terminator
     snprintf(portVersion, 18, "%d.%d.%d", gBuildVersionMajor, gBuildVersionMinor, gBuildVersionPatch);
 
+    std::string srcDir = std::filesystem::absolute(installPath).string() + "/assets";
 #ifdef __ANDROID__
-    if (!EnsureAndroidExtractorVersion(GetTorchVersionDir())) {
+    if (!EnsureAndroidExtractorVersion(GetTorchVersionDir(), srcDir)) {
         SPDLOG_ERROR("Could not copy the extractor files for {}", GetTorchVersionDir());
         return false;
     }
 #endif
-    std::string srcDir = std::filesystem::absolute(installPath).string() + "/assets";
     exportdir = std::filesystem::absolute(exportdir).string();
     // Work this out in the temporary folder
     std::string tempdir = Mkdtemp();

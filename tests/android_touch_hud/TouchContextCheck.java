@@ -80,11 +80,13 @@ public final class TouchContextCheck {
         check(shows(DC, 0, "move", 0, 0, true, 2) && shows(DC, 0, "move", 0, 0, false, 2), "choice keeps the left stick");
         check(!shows(DC, 0, "look", 0, 1, true, 2) && !shows(DC, 0, "look", 0, 1, false, 2), "choice hides the right stick");
 
-        // Epona: only A, B, Z, L and the left stick; C-up only while Navi has something to say.
+        // Epona: A, B, Z, L, Start, Map, Settings and the left stick; C-up only while Navi has something to say.
         check(btn(H, 0, "a", 0x8000) && btn(H, 0, "b", 0x4000) && btn(H, 0, "l", 0x20) && btn(H, 0, "z", 0x2000), "horse keeps A/B/Z/L");
-        for (int m : new int[]{1, 2, 4, 0x10, 0x1000, 0x10000, 0x800, 0x400, 0x200, 0x100})
+        check(btn(H, 0, "start", 0x1000) && btn(H, 0, "map", 0x10000) && btn(H, 0, "settings", 0), "horse keeps Start/Map/Settings");
+        check(btn(H, 0, "fairy", 0x10000), "a Map assigned to another GameCube slot stays too");
+        for (int m : new int[]{1, 2, 4, 0x10, 0x800, 0x400, 0x200, 0x100})
             check(!btn(H, NAVI_CALLING | DPAD_FLAG, "x", m), "horse hides mask " + m);
-        check(!btn(H, 0, "settings", 0) && !btn(H, 0, "eye", 0) && !btn(H, 0, "pad", 0), "horse hides gear/eye/pad");
+        check(!btn(H, 0, "eye", 0) && !btn(H, 0, "pad", 0), "horse hides eye/pad");
         check(!btn(H, 0, "cu", 8) && !btn(H, 0, "fairy", 0x20000), "horse hides C-up while Navi is quiet");
         check(btn(H, NAVI_CALLING, "cu", 8) && btn(H, NAVI_CALLING, "fairy", 0x20000), "horse shows C-up when Navi calls");
         check(shows(H, 0, "move", 0, 0, false, 2) && shows(H, 0, "move", 0, 0, true, 2), "horse keeps the steering stick");

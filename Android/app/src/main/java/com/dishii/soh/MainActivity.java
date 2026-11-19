@@ -693,33 +693,42 @@ public class MainActivity extends SDLActivity{
 
     /**
      * Called by the native extractor (on its own thread) once it knows which ROM version it is
-     * extracting. Copies that version's YAML from the APK if it is not there yet.
+     * extracting. Copies config.yml and that version's YAML (about 1,450 small files) out of the APK
+     * into the app's private storage and returns that folder, which the extractor then reads.
+     * Private storage is used because creating thousands of small files on shared storage
+     * (/storage/emulated/0, a FUSE mount) takes minutes, while here it takes a second or two.
+     * Returns null on failure.
      */
-    public synchronized boolean ensureExtractorVersionFromNative(String versionDir) {
+    public synchronized String ensureExtractorVersionFromNative(String versionDir) {
         if (versionDir == null || !versionDir.matches("[A-Za-z0-9_\\-]+")) {
             Log.e("setupFiles", "Rejected extractor version folder: " + versionDir);
-            return false;
+            return null;
         }
         String revision = getBundledExtractorVersion();
-        if (revision == null) return false;
-        // The native side reads the YAML from the data root it was given (currentDataRootPath).
-        File root = currentDataRootPath != null && !currentDataRootPath.isEmpty()
-                ? new File(currentDataRootPath) : getTargetRootFolder();
-        File versionFolder = new File(new File(root, "assets"), versionDir);
+        if (revision == null) return null;
+        File root = new File(getFilesDir(), "extractor");
+        File versionFolder = new File(root, versionDir);
         File marker = new File(versionFolder, VERSION_COPIED_MARKER);
-        if (revision.equals(ExtractorAssetState.readMarker(marker))) return true;
+        File config = new File(root, "config.yml");
+        if (revision.equals(ExtractorAssetState.readMarker(marker)) && config.isFile()) {
+            return root.getAbsolutePath();
+        }
         try {
             long start = System.currentTimeMillis();
+            // Anything already here is from another revision or an interrupted copy: start clean.
+            deleteRecursiveIfExists(versionFolder);
+            if (config.exists() && !config.delete()) throw new IOException("Failed to replace " + config);
+            AssetCopyUtil.copyTopLevelFiles(this, "assets", root.getAbsolutePath());
             AssetCopyUtil.copyAssetsToExternal(this, "assets/" + versionDir, versionFolder.getAbsolutePath());
             try (OutputStream out = new FileOutputStream(marker)) {
                 out.write(revision.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
             Log.i("setupFiles", "Extractor files for " + versionDir + " copied in "
                     + (System.currentTimeMillis() - start) + " ms");
-            return true;
+            return root.getAbsolutePath();
         } catch (IOException e) {
             Log.e("setupFiles", "Failed to copy extractor files for " + versionDir, e);
-            return false;
+            return null;
         }
     }
 

@@ -41,10 +41,35 @@ final class IntegratedTouchView extends View {
             skipHeld = true; host.integratedTouchButton(TouchContext.B, true);
         }
     }
+    // Choice boxes (Yes/No...): swipe up or down anywhere to move the cursor, tap to confirm with A.
+    private static final float CHOICE_STEP_DP = 36f, CHOICE_TAP_DP = 12f;
+    private static final long CHOICE_PULSE_MS = 100, CHOICE_GAP_MS = 220, CONFIRM_PRESS_MS = 90;
+    private boolean choiceTouch;
+    private float choiceAccum, choiceTravel;
+    private long choiceStepAt;
+    private final Runnable choiceStickOff = this::stopChoiceStick;
+    private final Runnable confirmRelease = this::releaseConfirm;
+    private void stopChoiceStick() { host.integratedTouchStick(0, 0); }
+    private void releaseConfirm() { host.integratedTouchButton(TouchContext.A, false); }
+    private void dragChoice(Control c, float y) {
+        float dy = (y - c.cy) / getResources().getDisplayMetrics().density;
+        c.cy = y;
+        choiceAccum += dy; choiceTravel += Math.abs(dy);
+        long now = android.os.SystemClock.uptimeMillis();
+        if (Math.abs(choiceAccum) >= CHOICE_STEP_DP && now - choiceStepAt >= CHOICE_GAP_MS) {
+            // Finger up = cursor up (stick up is positive), finger down = cursor down.
+            host.integratedTouchStick(0, choiceAccum < 0 ? 85 : -85);
+            choiceStepAt = now; choiceAccum = 0; choiceTravel = CHOICE_TAP_DP + 1;
+            removeCallbacks(choiceStickOff); postDelayed(choiceStickOff, CHOICE_PULSE_MS);
+        } else if (Math.abs(choiceAccum) >= CHOICE_STEP_DP) {
+            choiceAccum = Math.signum(choiceAccum) * CHOICE_STEP_DP; // a step is waiting for the gap
+        }
+    }
     private final RectF[] editorButtons = {new RectF(), new RectF(), new RectF(), new RectF()};
     private final float[] anchors = new float[30]; // B, three C items, four D-pad items, Navi/C-up, A action
     private TouchLayout placement = new TouchLayout(), saved;
-    private int mode, dragPointer = -1, state;
+    // presetMode is the style the player chose; mode is the layout in use (the N64 one while playing the ocarina).
+    private int mode, presetMode, dragPointer = -1, state;
     private int[] bindings;
     private boolean enabled, shown = true, editing, floatingLeft = true, floatingRight = true, suspended, transparentSticks;
     private float scale = 1, opacity = .55f, unit = 1, left, top, right, bottom;
@@ -87,13 +112,12 @@ final class IntegratedTouchView extends View {
     }
 
     void configure(int nextMode, boolean enabled, boolean floatingLeft, boolean floatingRight, float scale, float opacity, boolean transparentSticks) {
-        if (mode != nextMode) {
-            cancelInputs(); editing = false; mode = nextMode;
-            placement = TouchLayout.decode(preferences.getString("preset" + mode, ""));
+        if (presetMode != nextMode) {
+            cancelInputs(); editing = false; presetMode = nextMode; mode = 0;
             shown = true;
         }
-        this.enabled = enabled && mode > 0;
-        bindings = host.integratedTouchBindings(mode);
+        selectLayout();
+        this.enabled = enabled && presetMode > 0;
         this.floatingLeft = floatingLeft;
         this.floatingRight = floatingRight;
         this.transparentSticks = transparentSticks;
@@ -103,12 +127,23 @@ final class IntegratedTouchView extends View {
         cancelInputs(); layoutControls(); invalidate();
     }
 
+    /** Picks the layout in use: the player's style, or the N64 one while the ocarina is out. */
+    private void selectLayout() {
+        int wanted = !editing && TouchContext.fromState(state) == TouchContext.OCARINA ? 1 : presetMode;
+        if (wanted <= 0) return;
+        if (wanted != mode || placement == null) {
+            mode = wanted;
+            placement = TouchLayout.decode(preferences.getString("preset" + mode, ""));
+        }
+        bindings = host.integratedTouchBindings(mode);
+    }
+
     void resume() { suspended = false; invalidate(); }
     void suspend() { suspended = true; if (editing) finishEditing(false); cancelInputs(); host.integratedTouchReset(); }
     boolean cancelEditing() { if (!editing) return false; finishEditing(false); return true; }
     void startEditing() {
         if (!enabled || editing) return;
-        cancelInputs(); saved = placement.copy(); editing = true; selected = "";
+        cancelInputs(); selectLayout(); saved = placement.copy(); editing = true; selected = "";
         layoutControls(); invalidate();
         announceForAccessibility("Drag controls to move them. Select a control and drag a corner handle to resize. Save, Reset, Cancel and Hide or Show are at the top.");
     }
@@ -116,7 +151,7 @@ final class IntegratedTouchView extends View {
         if (save) preferences.edit().putString("preset" + mode, placement.encode()).apply();
         else placement = saved;
         editing = false; dragged = null; dragPointer = -1; resizeCorner = -1; gestureStart = null;
-        cancelInputs(); layoutControls(); invalidate();
+        cancelInputs(); selectLayout(); layoutControls(); invalidate();
     }
 
     private void add(String key, String label, int mask, int slot, int color,
@@ -273,6 +308,7 @@ final class IntegratedTouchView extends View {
     private void release(Control c) {
         if (c == dialogTap) {
             removeCallbacks(holdSkip);
+            if (choiceTouch) { removeCallbacks(choiceStickOff); host.integratedTouchStick(0, 0); }
             if (skipHeld) { host.integratedTouchButton(TouchContext.B, false); skipHeld = false; }
         }
         if (c.navStick) { host.integratedTouchStick(0,0); c.navStick = false; }
@@ -410,7 +446,7 @@ final class IntegratedTouchView extends View {
             boolean sceneChanged = (changed & (255 | TouchContext.CANCEL_BITS)) != 0;
             if ((changed & (8|64|128)) != 0) bindings = host.integratedTouchBindings(mode);
             state=next;
-            if (sceneChanged) { cancelInputs(); layoutControls(); }
+            if (sceneChanged) { cancelInputs(); selectLayout(); layoutControls(); }
             else if ((changed & TouchContext.SOFT_BITS) != 0) publishLayout();
         }
         if (editing) { paint.setColor(0xee080b12); canvas.drawRect(0,0,getWidth(),getHeight(),paint); }
@@ -601,7 +637,9 @@ final class IntegratedTouchView extends View {
             if(chosen.key.equals("eye")){cancelInputs();shown=!shown;layoutControls();return true;}
             if(chosen.key.equals("settings")){cancelInputs();host.nativeGamepadBackPressed();return true;}
             chosen.pointer=id;chosen.downAt=e.getEventTime();fingers.put(id,chosen);if(chosen.stick==1)beginLook();
-            if(chosen.stick>=0){if(isFloating(chosen)){chosen.cx=x;chosen.cy=y;}move(chosen,x,y);}
+            choiceTouch=chosen==dialogTap&&TouchContext.fromState(state)==TouchContext.DIALOG_CHOICE;
+            if(choiceTouch){chosen.cx=x;chosen.cy=y;choiceAccum=0;choiceTravel=0;}
+            else if(chosen.stick>=0){if(isFloating(chosen)){chosen.cx=x;chosen.cy=y;}move(chosen,x,y);}
             else if((state&1)!=0)host.integratedMenuButton(chosen.mask,true);
             else if(TouchContext.navigatesFileSelect(state,chosen.mask,chosen.stick)){chosen.navStick=true;navigate(chosen.mask);}
             else host.integratedTouchButton(chosen.mask,true);
@@ -609,14 +647,14 @@ final class IntegratedTouchView extends View {
                 postDelayed(holdSkip,HOLD_SKIP_MS);
             invalidate();return true;
         }
-        if(action==MotionEvent.ACTION_MOVE){for(int i=0;i<e.getPointerCount();i++){Control c=fingers.get(e.getPointerId(i));if(c!=null&&c.stick>=0)move(c,e.getX(i),e.getY(i));}invalidate();return fingers.size()>0;}
+        if(action==MotionEvent.ACTION_MOVE){for(int i=0;i<e.getPointerCount();i++){Control c=fingers.get(e.getPointerId(i));if(c==null)continue;if(c==dialogTap&&choiceTouch)dragChoice(c,e.getY(i));else if(c.stick>=0)move(c,e.getX(i),e.getY(i));}invalidate();return fingers.size()>0;}
         if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP){Control c=fingers.get(id);if(c!=null){
-            // On a choice box a quick, still touch on the stick (not a drag) confirms with A.
-            boolean confirm=action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP;
-            confirm=confirm&&c.stick==0&&TouchContext.fromState(state)==TouchContext.DIALOG_CHOICE
-                    &&e.getEventTime()-c.downAt<TAP_MS&&Math.hypot(c.dx,c.dy)<.3;
+            // On a choice box a quick, still touch confirms with A; a swipe only moves the cursor.
+            boolean confirm=c==dialogTap&&choiceTouch&&TouchContext.fromState(state)==TouchContext.DIALOG_CHOICE
+                    &&e.getEventTime()-c.downAt<TAP_MS*2&&choiceTravel<CHOICE_TAP_DP;
             host.integratedMenuButton(c.mask,false);release(c);fingers.remove(id);
-            if(confirm){host.integratedTouchButton(TouchContext.A,true);host.integratedTouchButton(TouchContext.A,false);}
+            if(c==dialogTap)choiceTouch=false;
+            if(confirm){host.integratedTouchButton(TouchContext.A,true);removeCallbacks(confirmRelease);postDelayed(confirmRelease,CONFIRM_PRESS_MS);}
             invalidate();return true;}}
         if(action==MotionEvent.ACTION_CANCEL){cancelInputs();layoutControls();return true;}
         return fingers.size()>0;

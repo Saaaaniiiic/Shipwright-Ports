@@ -829,7 +829,7 @@ void SohMenu::AddMenuSettings() {
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "While a text box is open, every touch button is hidden and tapping anywhere on the screen acts as A. "
             "With Skip Text on, holding the screen fast-forwards the text. "
-            "On choice boxes (Yes/No), drag on the left side to pick an answer and tap to confirm."));
+            "On choice boxes (Yes/No), swipe up or down to pick an answer and tap to confirm."));
     AddWidget(path, "Shops: Show Only A, B and Stick", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Shops"))
         .RaceDisable(false)
@@ -839,9 +839,9 @@ void SohMenu::AddMenuSettings() {
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Ocarina"))
         .RaceDisable(false)
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
-            "While playing the ocarina, shows only the note buttons (A and the C-buttons) and B to leave. "
-            "The D-pad stays if Dpad Ocarina Playback is on, and Z, L and R stay with custom ocarina controls. "
-            "Floating sticks keep working for pitch bend."));
+            "While playing the ocarina, the N64 button set is shown whatever style you use: C buttons, A, B, "
+            "Start, Settings and the stick. The D-pad stays if Dpad Ocarina Playback is on, and Z, L and R stay "
+            "with custom ocarina controls."));
     AddWidget(path, "Epona: Hide Unused Buttons", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_SETTING("TouchControls.Dynamic.Horse"))
         .RaceDisable(false)

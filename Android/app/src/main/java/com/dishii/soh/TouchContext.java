@@ -62,12 +62,14 @@ final class TouchContext {
         final boolean dpad = isDpad(key, mask, stick);
         switch (fromState(state)) {
             case OCARINA: {
-                // Notes (A + C), B to leave, D-pad notes and the L/R/Z helpers only when those options are on.
-                // A stick that draws nothing until touched stays available for pitch bend.
-                if (stick >= 0) return floating || (stick == 1 && mode == 2 && (state & FLAG_RIGHT_STICK) != 0);
-                if (gear || eye) return false;
+                // Always the N64 set (the view switches to that layout): C and A notes, B to leave, Start,
+                // Settings and the stick. The D-pad stays only with "Dpad Ocarina Playback", and Z/L/R only
+                // with custom ocarina controls. The camera touch area stays for pitch bend.
+                if (stick >= 0) return true;
+                if (eye) return false;
+                if (gear) return true;
                 if (dpad) return (state & FLAG_DPAD) != 0;
-                int keep = A | B | C_BUTTONS | NAVI;
+                int keep = A | B | START | C_BUTTONS | NAVI;
                 if ((state & FLAG_CUSTOM) != 0) keep |= Z | L | R;
                 return (mask & keep) != 0;
             }
@@ -80,8 +82,8 @@ final class TouchContext {
                 // Dialogue is driven by tapping the screen, not by A/B buttons.
                 return false;
             case DIALOG_CHOICE:
-                // Choices also need the left stick to pick an answer.
-                return stick == 0;
+                // Choices are fully touch: swipe up/down to pick, tap to confirm. No buttons or sticks.
+                return false;
             case SHOP:
                 // Shops: A, B and the left stick (the item cursor), nothing else.
                 if (stick >= 0) return stick == 0;
@@ -89,7 +91,7 @@ final class TouchContext {
             case HORSE:
                 // Epona: A, B, Z, L, Start, Map, Settings and the left stick, plus C-up only while Navi
                 // has something to say.
-                if (stick >= 0) return stick == 0;
+                if (stick >= 0) return true; // steering stick and the camera touch area
                 if (gear) return true;
                 if (mask == C_UP || (mask & NAVI) != 0) return (state & NAVI_CALLING) != 0;
                 return (mask & (A | B | Z | L | START | MAP)) != 0;

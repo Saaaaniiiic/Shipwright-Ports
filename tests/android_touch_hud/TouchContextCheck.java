@@ -49,8 +49,8 @@ public final class TouchContextCheck {
         // Ocarina: A, C and B stay; everything else goes.
         check(btn(O, 0, "a", 0x8000) && btn(O, 0, "b", 0x4000), "ocarina A/B");
         for (int c : new int[]{1, 2, 4, 8, 0x20000}) check(btn(O, 0, "c", c), "ocarina C/Navi " + c);
-        check(!btn(O, 0, "start", 0x1000) && !btn(O, 0, "map", 0x10000), "ocarina hides start/map");
-        check(!btn(O, 0, "settings", 0) && !btn(O, 0, "eye", 0), "ocarina hides gear/eye");
+        check(btn(O, 0, "start", 0x1000) && btn(O, 0, "settings", 0), "ocarina keeps Start and Settings (N64 set)");
+        check(!btn(O, 0, "map", 0x10000) && !btn(O, 0, "eye", 0), "ocarina hides map/eye");
         check(!btn(O, 0, "z", 0x2000) && !btn(O, 0, "l", 0x20) && !btn(O, 0, "r", 0x10), "ocarina hides Z/L/R by default");
         check(btn(O, CUSTOM_FLAG, "z", 0x2000) && btn(O, CUSTOM_FLAG, "l", 0x20) && btn(O, CUSTOM_FLAG, "r", 0x10),
                 "custom ocarina keeps Z/L/R helper notes");
@@ -59,12 +59,9 @@ public final class TouchContextCheck {
             check(btn(O, DPAD_FLAG, "du", d), "ocarina shows dpad with option " + d);
         }
         check(!btn(O, 0, "pad", 0) && btn(O, DPAD_FLAG, "pad", 0), "modern dpad group follows the option");
-        check(shows(O, 0, "move", 0, 0, true, 2), "floating move stick stays");
-        check(!shows(O, 0, "move", 0, 0, false, 2), "fixed move stick hidden");
-        check(!shows(O, 0, "look", 0, 1, false, 2), "fixed look stick hidden by default");
-        check(shows(O, RSTICK_FLAG, "look", 0, 1, false, 2), "right-stick notes keep GameCube C-stick");
-        check(!shows(O, RSTICK_FLAG, "look", 0, 1, false, 3), "right-stick notes only apply to GameCube preset");
-        check(!shows(O, RSTICK_FLAG, "look", 0, 1, false, 1), "...nor to N64");
+        for (int m : new int[]{1, 2, 3})
+            check(shows(O, 0, "move", 0, 0, true, m) && shows(O, 0, "move", 0, 0, false, m), "ocarina keeps the stick, preset " + m);
+        check(shows(O, 0, "look", 0, 1, true, 2), "ocarina keeps the camera touch area");
 
         // Cutscene without text: nothing at all.
         for (String key : everyKey) for (int m : everyMask)
@@ -75,9 +72,9 @@ public final class TouchContextCheck {
         for (String key : everyKey) for (int m : everyMask)
             check(!btn(D, DPAD_FLAG | CUSTOM_FLAG | NAVI_CALLING | SKIP_TEXT, key, m), "dialog hides " + key + m);
         check(!shows(D, 0, "move", 0, 0, true, 2) && !shows(D, 0, "look", 0, 1, true, 2), "dialog hides sticks");
-        // Choice boxes keep only the left stick (floating or fixed) to pick the answer.
+        // Choice boxes are fully touch (swipe + tap): no buttons and no sticks.
         for (String key : everyKey) for (int m : everyMask) check(!btn(DC, 0, key, m), "choice hides " + key + m);
-        check(shows(DC, 0, "move", 0, 0, true, 2) && shows(DC, 0, "move", 0, 0, false, 2), "choice keeps the left stick");
+        check(!shows(DC, 0, "move", 0, 0, true, 2) && !shows(DC, 0, "move", 0, 0, false, 2), "choice hides the left stick");
         check(!shows(DC, 0, "look", 0, 1, true, 2) && !shows(DC, 0, "look", 0, 1, false, 2), "choice hides the right stick");
 
         // Epona: A, B, Z, L, Start, Map, Settings and the left stick; C-up only while Navi has something to say.
@@ -90,7 +87,7 @@ public final class TouchContextCheck {
         check(!btn(H, 0, "cu", 8) && !btn(H, 0, "fairy", 0x20000), "horse hides C-up while Navi is quiet");
         check(btn(H, NAVI_CALLING, "cu", 8) && btn(H, NAVI_CALLING, "fairy", 0x20000), "horse shows C-up when Navi calls");
         check(shows(H, 0, "move", 0, 0, false, 2) && shows(H, 0, "move", 0, 0, true, 2), "horse keeps the steering stick");
-        check(!shows(H, 0, "look", 0, 1, false, 2) && !shows(H, 0, "look", 0, 1, true, 2), "horse hides the right stick");
+        check(shows(H, 0, "look", 0, 1, true, 2) && shows(H, 0, "look", 0, 1, false, 2), "horse keeps the camera touch area");
 
         // Shops: A, B and the left stick (the item cursor), nothing else.
         check(btn(S, 0, "a", 0x8000) && btn(S, 0, "b", 0x4000), "shop keeps A/B");

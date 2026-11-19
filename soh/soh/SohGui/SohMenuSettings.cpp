@@ -854,6 +854,30 @@ void SohMenu::AddMenuSettings() {
         .Options(CheckboxOptions().DefaultValue(true).Tooltip(
             "No touch buttons while the app starts or on the title screen (tap anywhere to start). "
             "File select shows only A, B and the left stick."));
+    // Touch camera (drag anywhere that is not a button). Read by the Android overlay at the start of each drag.
+    AddWidget(path, "Camera Sensitivity", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_SETTING("TouchControls.Camera.Sensitivity"))
+        .RaceDisable(false)
+        .Options(FloatSliderOptions().Min(0.2f).Max(3.0f).DefaultValue(1.0f).Step(0.05f).Format("%.2fx").Tooltip(
+            "How far the camera turns for each drag of your finger. Drag anywhere that is not a button."));
+    AddWidget(path, "Camera Vertical Sensitivity", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_SETTING("TouchControls.Camera.SensitivityY"))
+        .RaceDisable(false)
+        .Options(FloatSliderOptions().Min(0.2f).Max(3.0f).DefaultValue(1.0f).Step(0.05f).Format("%.2fx").Tooltip(
+            "Extra multiplier for up and down drags, on top of Camera Sensitivity."));
+    AddWidget(path, "Camera Smoothing", WIDGET_CVAR_SLIDER_FLOAT)
+        .CVar(CVAR_SETTING("TouchControls.Camera.Smoothing"))
+        .RaceDisable(false)
+        .Options(FloatSliderOptions().Min(0.0f).Max(0.9f).DefaultValue(0.0f).Step(0.05f).Format("%.2f").Tooltip(
+            "Softens the camera so it eases to a stop. 0 follows the finger exactly."));
+    AddWidget(path, "Invert Camera Horizontal", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Camera.InvertX"))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Reverses left and right camera drags."));
+    AddWidget(path, "Invert Camera Vertical", WIDGET_CVAR_CHECKBOX)
+        .CVar(CVAR_SETTING("TouchControls.Camera.InvertY"))
+        .RaceDisable(false)
+        .Options(CheckboxOptions().Tooltip("Reverses up and down camera drags."));
     AddWidget(path, "Extra Item Slots", WIDGET_CVAR_CHECKBOX)
         .CVar(CVAR_ENHANCEMENT("DpadEquips"))
         .Options(CheckboxOptions().Tooltip(

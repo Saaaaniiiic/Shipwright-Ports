@@ -183,6 +183,19 @@ extern "C" void TouchHud_SetLayout(const float* values, int count, int visible, 
 extern "C" JNIEXPORT jboolean JNICALL Java_com_dishii_soh_MainActivity_integratedRightStick(JNIEnv*, jobject, jint x, jint y) {
     return TouchHud_SetRightStick(x, y);
 }
+// Camera touch settings: {sensitivity, vertical multiplier, invert X, invert Y, smoothing}.
+extern "C" JNIEXPORT jfloatArray JNICALL Java_com_dishii_soh_MainActivity_integratedTouchCamera(JNIEnv* env, jobject) {
+    const float values[5] = {
+        CVarGetFloat(CVAR_SETTING("TouchControls.Camera.Sensitivity"), 1.0f),
+        CVarGetFloat(CVAR_SETTING("TouchControls.Camera.SensitivityY"), 1.0f),
+        CVarGetInteger(CVAR_SETTING("TouchControls.Camera.InvertX"), 0) ? 1.0f : 0.0f,
+        CVarGetInteger(CVAR_SETTING("TouchControls.Camera.InvertY"), 0) ? 1.0f : 0.0f,
+        CVarGetFloat(CVAR_SETTING("TouchControls.Camera.Smoothing"), 0.0f),
+    };
+    const auto result = env->NewFloatArray(5);
+    if (result) env->SetFloatArrayRegion(result, 0, 5, values);
+    return result;
+}
 extern "C" JNIEXPORT jint JNICALL Java_com_dishii_soh_MainActivity_integratedTouchState(JNIEnv*, jobject) {
     return TouchHud_GetState();
 }

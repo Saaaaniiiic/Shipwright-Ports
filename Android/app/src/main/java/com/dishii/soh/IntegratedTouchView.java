@@ -60,7 +60,6 @@ final class IntegratedTouchView extends View {
         final int mask, slot, color, stick;
         final RectF bounds;
         int pointer = -1;
-        long lookT; float lookVx, lookVy; // camera drag: last move time and smoothed finger speed (dp/ms)
         long downAt; // when the finger landed (a quick, still touch on the choice stick confirms with A)
         boolean navStick; // D-pad button currently acting as menu stick deflection (file select)
         float cx, cy, dx, dy;
@@ -278,7 +277,7 @@ final class IntegratedTouchView extends View {
         }
         if (c.navStick) { host.integratedTouchStick(0,0); c.navStick = false; }
         else if (c.stick == 0) host.integratedTouchStick(0,0);
-        else if (c.stick == 1) { removeCallbacks(lookIdle); c.lookVx = c.lookVy = 0; host.integratedLook(0,0,false); }
+        else if (c.stick == 1) { endLook(); host.integratedLook(0,0,false); }
         else if (c.mask != 0) host.integratedTouchButton(c.mask,false);
         c.pointer = -1; c.dx = c.dy = 0;
     }
@@ -286,33 +285,78 @@ final class IntegratedTouchView extends View {
         for (int i=0;i<fingers.size();i++) release(fingers.valueAt(i));
         fingers.clear(); host.integratedTouchReset();
     }
-    // Camera: the stick follows how fast the finger drags, so the view turns while the finger moves
-    // and stops as soon as it stops. Full deflection at LOOK_FULL_SPEED dp per millisecond.
-    private static final float LOOK_FULL_SPEED = .7f;
-    private static final long LOOK_IDLE_MS = 70;
+    // Camera, like a mobile shooter: the view turns by how far the finger moved. The game reads the right
+    // stick only on its own updates, so the finger's travel over the last LOOK_WINDOW_MS is summed and sent
+    // as the deflection; every pixel is counted once and the view stops when the finger does.
+    private static final long LOOK_WINDOW_MS = 50;
+    private static final float LOOK_FULL_DP = 24f;   // finger travel per window that is full deflection at sensitivity 1
+    private static final int LOOK_EVENTS = 256;
+    private final long[] lookTimes = new long[LOOK_EVENTS];
+    private final float[] lookDx = new float[LOOK_EVENTS], lookDy = new float[LOOK_EVENTS];
+    private int lookHead, lookCount;
+    private float lookSens = 1, lookSensY = 1, lookSmooth, lookOutX, lookOutY;
+    private boolean lookInvertX, lookInvertY, lookTicking;
     // A method reference, not a lambda: `host` is a blank final field, which a field-initializer lambda cannot use.
-    private final Runnable lookIdle = this::stopLookWhenIdle;
-    private void stopLookWhenIdle() {
-        for (int i = 0; i < fingers.size(); i++) {
-            Control c = fingers.valueAt(i);
-            if (c.stick == 1 && c.pointer >= 0) {
-                c.lookVx = c.lookVy = 0; c.dx = c.dy = 0;
-                host.integratedLook(0, 0, true);
-            }
+    private final Runnable lookTick = this::tickLook;
+
+    private void beginLook() {
+        lookHead = lookCount = 0; lookOutX = lookOutY = 0;
+        float[] cfg = host.integratedTouchCamera();
+        if (cfg != null && cfg.length >= 5) {
+            lookSens = Math.max(.05f, cfg[0]); lookSensY = Math.max(.05f, cfg[1]);
+            lookInvertX = cfg[2] != 0; lookInvertY = cfg[3] != 0;
+            lookSmooth = Math.max(0, Math.min(.9f, cfg[4]));
         }
     }
-    private void dragLook(Control c, float x, float y) {
+    private void endLook() {
+        removeCallbacks(lookTick); lookTicking = false;
+        lookHead = lookCount = 0; lookOutX = lookOutY = 0;
+    }
+    private Control lookFinger() {
+        for (int i = 0; i < fingers.size(); i++) {
+            Control c = fingers.valueAt(i);
+            if (c.stick == 1 && c.pointer >= 0) return c;
+        }
+        return null;
+    }
+    private void publishLook() {
         long now = android.os.SystemClock.uptimeMillis();
-        float dt = Math.max(1, now - c.lookT);
-        c.lookVx = c.lookVx * .5f + ((x - c.cx) / unit / dt) * .5f;
-        c.lookVy = c.lookVy * .5f + ((y - c.cy) / unit / dt) * .5f;
-        c.cx = x; c.cy = y; c.lookT = now;
-        c.dx = c.lookVx / LOOK_FULL_SPEED; c.dy = c.lookVy / LOOK_FULL_SPEED;
-        float length = (float) Math.hypot(c.dx, c.dy);
-        if (length > 1) { c.dx /= length; c.dy /= length; }
-        host.integratedLook(c.dx, c.dy, true);
-        removeCallbacks(lookIdle);
-        postDelayed(lookIdle, LOOK_IDLE_MS);
+        while (lookCount > 0 && now - lookTimes[lookHead] > LOOK_WINDOW_MS) { lookHead = (lookHead + 1) % LOOK_EVENTS; lookCount--; }
+        float sx = 0, sy = 0;
+        for (int i = 0; i < lookCount; i++) { int k = (lookHead + i) % LOOK_EVENTS; sx += lookDx[k]; sy += lookDy[k]; }
+        float gain = 1f / LOOK_FULL_DP;
+        float tx = sx * gain * lookSens * (lookInvertX ? -1 : 1);
+        float ty = sy * gain * lookSens * lookSensY * (lookInvertY ? -1 : 1);
+        float keep = lookSmooth;
+        lookOutX = lookOutX * keep + tx * (1 - keep);
+        lookOutY = lookOutY * keep + ty * (1 - keep);
+        if (Math.abs(lookOutX) < .01f) lookOutX = 0;
+        if (Math.abs(lookOutY) < .01f) lookOutY = 0;
+        float length = (float) Math.hypot(lookOutX, lookOutY);
+        float ox = lookOutX, oy = lookOutY;
+        if (length > 1) { ox /= length; oy /= length; }
+        Control c = lookFinger();
+        if (c != null) { c.dx = ox; c.dy = oy; }
+        host.integratedLook(ox, oy, true);
+    }
+    private void tickLook() {
+        lookTicking = false;
+        if (lookFinger() == null) return;
+        publishLook();
+        lookTicking = true;
+        postOnAnimation(lookTick);
+    }
+    private void dragLook(Control c, float x, float y) {
+        float dp = getResources().getDisplayMetrics().density;
+        float dx = (x - c.cx) / dp, dy = (y - c.cy) / dp;
+        c.cx = x; c.cy = y;
+        if (dx != 0 || dy != 0) {
+            int k = (lookHead + lookCount) % LOOK_EVENTS;
+            if (lookCount == LOOK_EVENTS) { lookHead = (lookHead + 1) % LOOK_EVENTS; lookCount--; }
+            lookTimes[k] = android.os.SystemClock.uptimeMillis(); lookDx[k] = dx; lookDy[k] = dy; lookCount++;
+        }
+        publishLook();
+        if (!lookTicking) { lookTicking = true; postOnAnimation(lookTick); }
     }
     private void move(Control c, float x, float y) {
         if (c.stick == 1) { dragLook(c, x, y); return; }
@@ -556,7 +600,7 @@ final class IntegratedTouchView extends View {
             if(chosen==null)return fingers.size()>0;
             if(chosen.key.equals("eye")){cancelInputs();shown=!shown;layoutControls();return true;}
             if(chosen.key.equals("settings")){cancelInputs();host.nativeGamepadBackPressed();return true;}
-            chosen.pointer=id;chosen.downAt=e.getEventTime();chosen.lookT=android.os.SystemClock.uptimeMillis();chosen.lookVx=chosen.lookVy=0;fingers.put(id,chosen);
+            chosen.pointer=id;chosen.downAt=e.getEventTime();fingers.put(id,chosen);if(chosen.stick==1)beginLook();
             if(chosen.stick>=0){if(isFloating(chosen)){chosen.cx=x;chosen.cy=y;}move(chosen,x,y);}
             else if((state&1)!=0)host.integratedMenuButton(chosen.mask,true);
             else if(TouchContext.navigatesFileSelect(state,chosen.mask,chosen.stick)){chosen.navStick=true;navigate(chosen.mask);}

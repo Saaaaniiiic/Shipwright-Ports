@@ -994,6 +994,7 @@ public class MainActivity extends SDLActivity{
         if (direction >= 0) nativeMenuNavKey(direction, down);
     }
     native boolean integratedRightStick(int x, int y);
+    native float[] integratedTouchCamera();
     void integratedLook(float x, float y, boolean active) {
         if (integratedRightStick(active ? Math.round(x*85) : 0, active ? Math.round(-y*85) : 0)) {
             resetRightTouch(); integratedLookHeld = false; return;
